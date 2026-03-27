@@ -1,0 +1,15 @@
+opencv-python
+pillow
+numpy
+requests
+python-dotenv
+rembg
+onnxruntime
+groq
+xgboost
+google-generativeai
+streamlit
+scikit-learn
+pandas
+matplotlib
+seaborn
