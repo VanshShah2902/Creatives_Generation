@@ -36,8 +36,19 @@ class LayoutEngine:
         # Priority: strategy['cluster_id'] -> payload['layout_cluster'] -> default "cluster_3"
         cluster_id = payload.get("cluster_id", "")
 
+        if cluster_id == "problem_first":
+            layout_def = {
+                "person_position": "left",
+                "product_position": "right",
+                "text_position": "top",
+                "focus": "problem visualization"
+            }
+            for k, v in layout_def.items():
+                if k not in payload:
+                    payload[k] = v
+
         # Normalize cluster names
-        if cluster_id in ["product_first", "solution_first", "doctor_first", "ingredient_first"]:
+        if cluster_id in ["product_first", "solution_first", "doctor_first", "ingredient_first", "problem_first"]:
             # Map to existing layout or define mapping
             cluster_id = "cluster_3"
              

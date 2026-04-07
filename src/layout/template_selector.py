@@ -12,7 +12,8 @@ class TemplateSelector:
             "doctor_endorsement": "cluster_3",
             "lifestyle": "cluster_1",
             "minimal_product": "cluster_2", # Assuming a cluster_2 exists or falls back
-            "product_showcase": "cluster_3"
+            "product_showcase": "cluster_3",
+            "problem_first": "cluster_problem_first"
         }
         
         cluster = style_map.get(style, "cluster_3")

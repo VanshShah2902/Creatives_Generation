@@ -36,3 +36,8 @@ models/*.joblib
 # OS files
 .DS_Store
 Thumbs.db
+
+# Outputs added
+*.png
+*.jpg
+venv/

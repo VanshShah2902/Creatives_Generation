@@ -15,6 +15,39 @@ def sanitize_prompt(prompt: str) -> str:
 class PromptBuilder:
     """Converts a structured scene blueprint into a high-fidelity prompt string using variation-first logic."""
     
+    FONT_PRESETS = [
+        {
+            "name": "panic",
+            "headline": "jagged distressed italic handwritten font",
+            "sub": "thin sans-serif",
+            "cta": "condensed bold sans-serif"
+        },
+        {
+            "name": "trust",
+            "headline": "classic serif, medical slab-serif",
+            "sub": "elegant serif",
+            "cta": "clean sans-serif"
+        },
+        {
+            "name": "premium",
+            "headline": "Montserrat Bold",
+            "sub": "modern serif",
+            "cta": "minimal sans-serif"
+        },
+        {
+            "name": "energy",
+            "headline": "dynamic italic sans-serif",
+            "sub": "bold sans-serif",
+            "cta": "condensed impact font"
+        },
+        {
+            "name": "calm",
+            "headline": "rounded soft sans-serif",
+            "sub": "light serif",
+            "cta": "clean minimal sans-serif"
+        }
+    ]
+
     CLUSTER_SCENES = {
         "product_first": {
             "composition": "center large product, top bold headline",
@@ -31,6 +64,13 @@ class PromptBuilder:
         "ingredient_first": {
             "composition": "center product, ingredient grid layout",
             "subject_positions": "product centered, ingredients arranged around"
+        },
+        "problem_first": {
+            "environment": "real-life discomfort setting, slightly tense atmosphere",
+            "camera": "eye-level emotional storytelling shot",
+            "lighting": "slightly dramatic, soft shadow lighting",
+            "subject_positions": "person on left showing problem, empty space for product on right",
+            "props": "subtle lifestyle elements indicating discomfort"
         }
     }
 
@@ -45,16 +85,26 @@ class PromptBuilder:
     def build_prompt_core(self, cluster_id: str) -> str:
         """Extracts the core scene structural signals."""
         c_scene = self.CLUSTER_SCENES.get(cluster_id, self.CLUSTER_SCENES["product_first"])
-        return f"{c_scene['composition']}, {c_scene['subject_positions']}"
+        comp = c_scene.get("composition", "focused structured composition")
+        pos = c_scene.get("subject_positions", "subject clearly visible")
+        return f"{comp}, {pos}"
 
-    def build_multiple_prompts(self, payload, cluster_id, blueprint=None, num_variations=5):
+    def build_multiple_prompts(self, payload, cluster_id, blueprint=None, strategy=None, num_variations=5):
         print("[PromptBuilder] Using Blueprint:", blueprint)
         prompts = []
         
         core_scene = self.build_prompt_core(cluster_id)
         product_name = payload.get("product_name", "product")
         
-        # Step 4: Control Subject Usage (Middle-aged woman index selection)
+        emotion = strategy.get("emotion") if strategy else "neutral"
+        palette = strategy.get("color_palette") if strategy else {}
+        headline_tone = strategy.get("headline_tone") if strategy else "informative"
+
+        print("[PromptBuilder] Applied Strategy:", {
+            "emotion": emotion
+        })
+        
+        # Step 4: Control Subject Usage (Indian middle-aged woman index selection)
         # Select 2 or 3 indices where the woman will be featured
         use_woman_indices = random.sample(range(num_variations), k=random.choice([2, 3]))
 
@@ -79,7 +129,7 @@ class PromptBuilder:
             if cluster_id == "doctor_first":
                 components.append("featuring a professional doctor as subject")
             elif i in use_woman_indices:
-                components.append("featuring a natural looking middle-aged woman in the scene")
+                components.append("featuring a natural looking Indian middle-aged woman in the scene")
             else:
                 # Rest remain product-focused as per STEP 4
                 components.append("product-focused scene, emphasizing clarity and brand presence, no human subject")
@@ -112,6 +162,37 @@ class PromptBuilder:
 
             # 7. Pricing
             components.append(f"product price: {payload.get('price', 'rs.599')}")
+            
+            if cluster_id in ["problem_first", "solution_first"]:
+                components.append(f"subject expressing clear emotion of {emotion}")
+            
+            if cluster_id == "problem_first":
+                print("[Cluster] problem_first active")
+                components.append("person showing visible discomfort, worry or stress, tense posture, expressive face")
+                components.append("headline phrased as a problem or concern, emotionally triggering")
+            
+            if palette:
+                components.append(
+                    f"color scheme using {palette.get('primary')}, {palette.get('secondary')} with {palette.get('accent')} accents"
+                )
+                
+            if cluster_id == "problem_first" or emotion == "panic":
+                font_preset = next((p for p in self.FONT_PRESETS if p["name"] == "panic"), self.FONT_PRESETS[0])
+            elif emotion == "calm":
+                font_preset = next((p for p in self.FONT_PRESETS if p["name"] == "calm"), self.FONT_PRESETS[4])
+            else:
+                font_preset = self.FONT_PRESETS[i % len(self.FONT_PRESETS)]
+                
+            print("[FontPreset]", font_preset["name"])
+            
+            components.append(f"headline text in {font_preset['headline']}")
+            components.append(f"supporting text in {font_preset['sub']}")
+            components.append(f"call-to-action text in {font_preset['cta']}")
+            components.append("clean professional typography hierarchy, high readability, premium ad design")
+            
+            components.append(
+                f"headline tone should feel {headline_tone} and emotionally engaging"
+            )
             
             # 8. Fixed Quality Modifiers
             components.extend([

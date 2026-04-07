@@ -120,7 +120,7 @@ with col1:
         st.subheader("Creative Settings")
         creative_type = st.selectbox(
             "Creative Type",
-            ["product_first", "solution_first", "doctor_first", "ingredient_first"],
+            ["product_first", "solution_first", "doctor_first", "ingredient_first", "problem_first"],
             key="creative_style_input"
         )
         

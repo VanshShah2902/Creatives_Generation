@@ -17,6 +17,7 @@ from src.copy_generation.copy_generator import CopyGenerator
 from src.evaluation.creative_scorer import CreativeScorer
 from src.evaluation.creative_selector import CreativeSelector
 from src.creative_strategy.competitor_intelligence import CompetitorIntelligence
+from src.creative.creative_strategy import CreativeStrategyBuilder
 
 class AdGenerationPipeline:
     """Orchestrates the factory flow from inputs to scored creatives."""
@@ -35,6 +36,7 @@ class AdGenerationPipeline:
         self.variation_eng = CreativeVariationEngine()
         self.scorer = CreativeScorer()
         self.selector = CreativeSelector()
+        self.creative_strategy = CreativeStrategyBuilder()
         
     def run(self, input_path: str, num_variations: int = 5) -> dict:
         """
@@ -71,7 +73,7 @@ class AdGenerationPipeline:
         os.makedirs(prompts_dir, exist_ok=True)
         
         # 4. Load Clusters
-        clusters = ["product_first", "solution_first", "doctor_first", "ingredient_first"]
+        clusters = ["product_first", "solution_first", "doctor_first", "ingredient_first", "problem_first"]
         cluster_prompts = {}
         
         # 5. Process each cluster for prompts
@@ -87,11 +89,16 @@ class AdGenerationPipeline:
                 copy = self.copy_gen.generate_copy(payload)
                 payload.update(copy)
                 
+                strategy = self.creative_strategy.build(payload, cluster_id)
+                payload["creative_strategy"] = strategy
+                print("[Pipeline] Creative Strategy:", strategy)
+                
                 # A. Build multiple prompts for this specific cluster
                 prompts = self.prompt_builder.build_multiple_prompts(
                     payload,
                     cluster_id=cluster_id,
                     blueprint=payload.get("scene_blueprint"),
+                    strategy=payload.get("creative_strategy"),
                     num_variations=num_variations
                 )
                 cluster_prompts[cluster_id] = prompts
