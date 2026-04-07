@@ -5,6 +5,9 @@ _MOCK_CLUSTERS = ["awareness", "conversion", "retention"]
 
 _MOCK_IMAGE_URL = "https://cdn.example.com/mock-ad.png"
 
+# In-memory store: creative_id -> Creative
+_store: dict[str, Creative] = {}
+
 
 def generate_creatives(request: GenerateCreativesRequest) -> CreativeResponse:
     """
@@ -34,4 +37,11 @@ def generate_creatives(request: GenerateCreativesRequest) -> CreativeResponse:
         for cluster in _MOCK_CLUSTERS
     ]
 
+    for creative in creatives:
+        _store[creative.creative_id] = creative
+
     return CreativeResponse.from_list(creatives)
+
+
+def get_creative(creative_id: str) -> Creative | None:
+    return _store.get(creative_id)
