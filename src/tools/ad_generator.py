@@ -14,7 +14,7 @@ class AdGeneratorTool(BaseTool):
 
     @property
     def name(self) -> str:
-        return "ad_generator"
+        return "generate_creatives"
 
     def run(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.generate_creatives(payload)
