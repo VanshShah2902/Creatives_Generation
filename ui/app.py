@@ -10,6 +10,7 @@ project_root = Path(__file__).parent.parent
 sys.path.append(str(project_root))
 
 from generation_engine.pipeline_runner import AdGenerationPipeline
+from src.config.config_loader import load_fonts, load_emotions, load_prompts
 
 # Page Config
 st.set_page_config(page_title="AI Ad Creative Generator", layout="wide")
@@ -277,7 +278,7 @@ with col2:
                         except: pass
 
                     with st.expander(f"✅ Final Ad: {display_name}", expanded=True):
-                        st.image(img_path, use_container_width=True)
+                        st.image(img_path, width='stretch')
                         
                         # Show the specific prompt for this image
                         if os.path.exists(selected_path):
@@ -314,6 +315,85 @@ with col2:
         st.info("Fill out the campaign form and click 'Generate Creative' to start.")
         st.write("---")
         st.caption("A preview will appear here once you hit 'Generate Creative'.")
+
+
+# ─────────────────────────────────────────────────────────
+# ⚙️ Config Editor Section
+# ─────────────────────────────────────────────────────────
+st.markdown("---")
+with st.expander("⚙️ Config Editor (Advanced)", expanded=False):
+    st.caption("Edit emotion lists, font presets, and prompt rules. Changes are saved directly to JSON config files.")
+
+    config_base_path = os.path.dirname(os.path.dirname(__file__))
+
+    try:
+        fonts_config   = load_fonts()
+        emotions_config = load_emotions()
+        prompts_config  = load_prompts()
+    except Exception as e:
+        st.error(f"Failed to load config: {e}")
+        fonts_config, emotions_config, prompts_config = {"presets": []}, {}, {}
+
+    tab_emotions, tab_fonts, tab_prompts = st.tabs(["😤 Emotions", "🔤 Font Presets", "💬 Prompt Rules"])
+
+    # ── Emotions Tab ──────────────────────────────────────
+    with tab_emotions:
+        st.subheader("Cluster Emotions")
+        st.info("Each cluster picks one emotion randomly per variation from this list.")
+        edited_emotions = {}
+        for cluster, values in emotions_config.items():
+            new_val = st.text_input(
+                f"{cluster.replace('_', ' ').title()} emotions (comma-separated)",
+                ", ".join(values),
+                key=f"em_{cluster}"
+            )
+            edited_emotions[cluster] = [v.strip() for v in new_val.split(",") if v.strip()]
+
+        if st.button("💾 Save Emotions", key="save_emotions"):
+            with open(os.path.join(config_base_path, "config", "emotions.json"), "w") as f:
+                json.dump(edited_emotions, f, indent=2)
+            st.success("✅ emotions.json saved!")
+            st.info("Restart the app to apply changes to the pipeline.")
+
+    # ── Fonts Tab ─────────────────────────────────────────
+    with tab_fonts:
+        st.subheader("Font Presets")
+        st.info("Each preset is mapped to an emotional tone. Fonts are injected into every generated prompt.")
+        edited_fonts = []
+        for i, preset in enumerate(fonts_config.get("presets", [])):
+            with st.container():
+                st.markdown(f"**Preset {i+1}: `{preset['name']}`**")
+                c1, c2, c3 = st.columns(3)
+                headline = c1.text_input("Headline", preset.get("headline", ""), key=f"font_hl_{i}")
+                sub      = c2.text_input("Sub",      preset.get("sub", ""),      key=f"font_sub_{i}")
+                cta      = c3.text_input("CTA",      preset.get("cta", ""),      key=f"font_cta_{i}")
+                edited_fonts.append({"name": preset["name"], "headline": headline, "sub": sub, "cta": cta})
+                st.markdown("---")
+
+        if st.button("💾 Save Fonts", key="save_fonts"):
+            with open(os.path.join(config_base_path, "config", "fonts.json"), "w") as f:
+                json.dump({"presets": edited_fonts}, f, indent=2)
+            st.success("✅ fonts.json saved!")
+            st.info("Restart the app to apply changes to the pipeline.")
+
+    # ── Prompt Rules Tab ──────────────────────────────────
+    with tab_prompts:
+        st.subheader("Prompt Rules per Cluster")
+        st.info("Define default headline style and layout hint for each cluster.")
+        edited_prompts = {}
+        for cluster, rules in prompts_config.items():
+            st.markdown(f"**{cluster.replace('_', ' ').title()}**")
+            c1, c2 = st.columns(2)
+            hl_style    = c1.text_input("Headline Style",  rules.get("headline_style", ""),  key=f"pr_hl_{cluster}")
+            layout_hint = c2.text_input("Layout Hint",     rules.get("layout_hint", ""),     key=f"pr_lh_{cluster}")
+            edited_prompts[cluster] = {"headline_style": hl_style, "layout_hint": layout_hint}
+            st.markdown("---")
+
+        if st.button("💾 Save Prompt Rules", key="save_prompts"):
+            with open(os.path.join(config_base_path, "config", "prompts.json"), "w") as f:
+                json.dump(edited_prompts, f, indent=2)
+            st.success("✅ prompts.json saved!")
+            st.info("Restart the app to apply changes to the pipeline.")
 
 # Instructions for Running
 # To run this app:

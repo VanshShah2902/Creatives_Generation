@@ -12,41 +12,20 @@ def sanitize_prompt(prompt: str) -> str:
 
     return prompt.strip()
 
+from src.config.config_loader import load_fonts, load_prompts
+
+FONT_CONFIG = load_fonts()
+FONT_PRESETS = FONT_CONFIG.get("presets", [])
+
+if not FONT_PRESETS:
+    raise ValueError("Font config not loaded")
+
+print("[Config] Fonts Loaded:", len(FONT_PRESETS))
+
+PROMPT_CONFIG = load_prompts()
+
 class PromptBuilder:
     """Converts a structured scene blueprint into a high-fidelity prompt string using variation-first logic."""
-    
-    FONT_PRESETS = [
-        {
-            "name": "panic",
-            "headline": "jagged distressed italic handwritten font",
-            "sub": "thin sans-serif",
-            "cta": "condensed bold sans-serif"
-        },
-        {
-            "name": "trust",
-            "headline": "classic serif, medical slab-serif",
-            "sub": "elegant serif",
-            "cta": "clean sans-serif"
-        },
-        {
-            "name": "premium",
-            "headline": "Montserrat Bold",
-            "sub": "modern serif",
-            "cta": "minimal sans-serif"
-        },
-        {
-            "name": "energy",
-            "headline": "dynamic italic sans-serif",
-            "sub": "bold sans-serif",
-            "cta": "condensed impact font"
-        },
-        {
-            "name": "calm",
-            "headline": "rounded soft sans-serif",
-            "sub": "light serif",
-            "cta": "clean minimal sans-serif"
-        }
-    ]
 
     CLUSTER_SCENES = {
         "product_first": {
@@ -92,23 +71,27 @@ class PromptBuilder:
     def build_multiple_prompts(self, payload, cluster_id, blueprint=None, strategy=None, num_variations=5):
         print("[PromptBuilder] Using Blueprint:", blueprint)
         prompts = []
+        cluster_rules = PROMPT_CONFIG.get(cluster_id, {})
         
         core_scene = self.build_prompt_core(cluster_id)
         product_name = payload.get("product_name", "product")
         
-        emotion = strategy.get("emotion") if strategy else "neutral"
+        # Load full emotion list for this cluster from config (used per-variation below)
+        from src.config.config_loader import load_emotions
+        EMOTION_CONFIG = load_emotions()
+        cluster_emotions = EMOTION_CONFIG.get(cluster_id, ["neutral"])
+
         palette = strategy.get("color_palette") if strategy else {}
         headline_tone = strategy.get("headline_tone") if strategy else "informative"
-
-        print("[PromptBuilder] Applied Strategy:", {
-            "emotion": emotion
-        })
         
         # Step 4: Control Subject Usage (Indian middle-aged woman index selection)
         # Select 2 or 3 indices where the woman will be featured
         use_woman_indices = random.sample(range(num_variations), k=random.choice([2, 3]))
 
         for i, variation in enumerate(self.VARIATIONS[:num_variations]):
+            # Pick a fresh random emotion per variation from the full cluster emotion list
+            emotion = random.choice(cluster_emotions)
+            print(f"[PromptBuilder][Variation {i}] Emotion: {emotion}")
             components = []
             
             # Step 5: Each prompt must independently decide its components
@@ -163,8 +146,8 @@ class PromptBuilder:
             # 7. Pricing
             components.append(f"product price: {payload.get('price', 'rs.599')}")
             
-            if cluster_id in ["problem_first", "solution_first"]:
-                components.append(f"subject expressing clear emotion of {emotion}")
+            # Inject emotion for ALL clusters — each variation gets its own random emotion
+            components.append(f"subject expressing clear emotion of {emotion}")
             
             if cluster_id == "problem_first":
                 print("[Cluster] problem_first active")
@@ -177,11 +160,11 @@ class PromptBuilder:
                 )
                 
             if cluster_id == "problem_first" or emotion == "panic":
-                font_preset = next((p for p in self.FONT_PRESETS if p["name"] == "panic"), self.FONT_PRESETS[0])
+                font_preset = next((p for p in FONT_PRESETS if p["name"] == "panic"), FONT_PRESETS[0])
             elif emotion == "calm":
-                font_preset = next((p for p in self.FONT_PRESETS if p["name"] == "calm"), self.FONT_PRESETS[4])
+                font_preset = next((p for p in FONT_PRESETS if p["name"] == "calm"), FONT_PRESETS[4])
             else:
-                font_preset = self.FONT_PRESETS[i % len(self.FONT_PRESETS)]
+                font_preset = FONT_PRESETS[i % len(FONT_PRESETS)]
                 
             print("[FontPreset]", font_preset["name"])
             

@@ -5,15 +5,12 @@ class CreativeStrategyBuilder:
         """
         Generates creative strategy based on cluster type.
         """
-        EMOTION_MAP = {
-            "problem_first": ["fear", "worry", "panic", "shock"],
-            "solution_first": ["relief", "calm", "hope"],
-            "doctor_first": ["trust", "confidence"],
-            "ingredient_first": ["fresh", "natural"],
-            "product_first": ["confidence", "premium"]
-        }
-        
-        emotion = random.choice(EMOTION_MAP.get(cluster, ["neutral"]))
+        from src.config.config_loader import load_emotions
+        EMOTION_CONFIG = load_emotions()
+        print("[Config] Emotions Loaded:", EMOTION_CONFIG.keys())
+
+        emotions = EMOTION_CONFIG.get(cluster, ["neutral"])
+        emotion = random.choice(emotions)
 
         palette = {
             "primary": "green",

@@ -1,0 +1,28 @@
+{
+  "presets": [
+    {
+      "name": "panic",
+      "headline": "jagged distressed italic handwritten font",
+      "sub": "thin sans-serif",
+      "cta": "condensed bold sans-serif"
+    },
+    {
+      "name": "trust",
+      "headline": "classic serif, medical slab-serif",
+      "sub": "elegant serif",
+      "cta": "clean sans-serif"
+    },
+    {
+      "name": "premium",
+      "headline": "Montserrat Bold",
+      "sub": "modern serif",
+      "cta": "minimal sans-serif"
+    },
+    {
+      "name": "calm",
+      "headline": "rounded soft sans-serif",
+      "sub": "light serif",
+      "cta": "clean minimal sans-serif"
+    }
+  ]
+}
