@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel, Field, HttpUrl, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class Creative(BaseModel):
@@ -37,3 +37,14 @@ class Creative(BaseModel):
         return v
 
     model_config = {"frozen": True}
+
+
+class CreativeResponse(BaseModel):
+    creatives: list[Creative]
+
+    @classmethod
+    def from_list(cls, creatives: list[Creative]) -> "CreativeResponse":
+        return cls(creatives=creatives)
+
+    def to_json(self) -> str:
+        return self.model_dump_json(indent=2)
