@@ -10,6 +10,7 @@ class CopyGenerator:
         product = payload.get("product_name", "")
         benefits = payload.get("benefits", [])
         problems = payload.get("problems", [])
+        solutions = payload.get("solutions", [])
         ingredients = payload.get("ingredients", [])
         cluster = payload.get("cluster_id", payload.get("creative_style", ""))
 
@@ -21,6 +22,7 @@ class CopyGenerator:
         PRODUCT: {product}
         BENEFITS: {benefits}
         PROBLEMS: {problems}
+        SOLUTIONS: {solutions}
         INGREDIENTS: {ingredients}
         AD TYPE: {cluster}
 
@@ -33,17 +35,18 @@ class CopyGenerator:
         - Avoid generic phrases like "best product"
         - Make it sound like real ad copy
         - Tone depends on AD TYPE:
-          - product_first: premium, product-focused
-          - solution_first: problem-solution tone
+          - product_first: premium, product-focused tone
+          - solution_first: lead with the SOLUTION and positive outcome — use the SOLUTIONS list above as the headline focus. Tone: relieving, hopeful, outcome-forward.
           - doctor_first: authority, trust
           - ingredient_first: natural, purity
+          - problem_first: lead with the PROBLEM in the headline — make it feel relatable and urgent, use the PROBLEMS list above. Tone: empathetic, urgent, then pivots to hope.
 
         OUTPUT JSON:
         {{
             "headline": "...",
             "subheadline": "..."
         }}
-        
+
         Return ONLY valid JSON. Do NOT include any explanation or text outside JSON. Do NOT wrap in markdown or backticks.
         """
 
