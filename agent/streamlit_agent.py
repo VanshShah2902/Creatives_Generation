@@ -16,7 +16,7 @@ if _ROOT not in sys.path:
 
 import streamlit as st
 from agent.agent import AdAgent
-from agent.db.storage import store_approved_creative, store_approved_prompts, get_approved_creatives
+from agent.db.storage import store_approved_creative, store_approved_prompts, get_approved_creatives, delete_approved_creative
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -111,6 +111,9 @@ if "campaign_context" not in st.session_state:
 if "view_library" not in st.session_state:
     st.session_state.view_library = False
 
+if "prompt_uploads" not in st.session_state:
+    st.session_state.prompt_uploads = {}  # key: "cluster_i" → UploadedFile
+
 # ---------------------------------------------------------------------------
 # Header
 # ---------------------------------------------------------------------------
@@ -145,6 +148,7 @@ with col_reset:
         st.session_state.pending_approval = {}
         st.session_state.campaign_context = {}
         st.session_state.view_library = False
+        st.session_state.prompt_uploads = {}
         st.rerun()
 
 st.divider()
@@ -165,7 +169,7 @@ if st.session_state.view_library:
             created = rec.get("created_at", "")[:19].replace("T", " ")
 
             with st.container(border=True):
-                col_info, col_badge = st.columns([4, 1])
+                col_info, col_badge, col_del = st.columns([4, 1, 1])
                 with col_info:
                     st.markdown(f"**{product}** — {brand}")
                     st.caption(f"Cluster: {rec.get('cluster_id', '')} | Created: {created}")
@@ -174,13 +178,34 @@ if st.session_state.view_library:
                         st.success("✅ Image Approved")
                     else:
                         st.info("📋 Prompts Approved")
+                with col_del:
+                    if st.button("🗑️ Delete", key=f"del_{rec['id']}", use_container_width=True):
+                        result = delete_approved_creative(rec["id"])
+                        if result.get("status") == "deleted":
+                            st.rerun()
+                        else:
+                            st.error(result.get("message", "Delete failed."))
 
                 if rec.get("image_url"):
                     st.image(rec["image_url"], width=300)
 
                 if rec.get("prompts"):
                     with st.expander("View Prompts"):
-                        st.json(rec["prompts"])
+                        prompt_urls = rec.get("prompt_image_urls") or {}
+                        prompts_data = rec["prompts"]
+                        if isinstance(prompts_data, dict):
+                            for cluster_key, cluster_prompts in prompts_data.items():
+                                st.markdown(f"**{cluster_key.replace('_', ' ').title()}**")
+                                if isinstance(cluster_prompts, list):
+                                    for idx, p in enumerate(cluster_prompts):
+                                        st.markdown(f"_{p}_")
+                                        img_url = prompt_urls.get(f"{cluster_key}_{idx}")
+                                        if img_url:
+                                            st.image(img_url, caption=f"Reference image", width=200)
+                                else:
+                                    st.write(cluster_prompts)
+                        else:
+                            st.json(prompts_data)
     st.stop()
 
 # ---------------------------------------------------------------------------
@@ -212,6 +237,19 @@ if st.session_state.cluster_prompts:
             with col_text:
                 with st.expander(f"**{i + 1}.** {short}"):
                     st.write(prompt)
+                    # Per-prompt image attachment
+                    upload_key = f"{cluster}_{i}"
+                    uploaded = st.file_uploader(
+                        "📎 Attach a reference image for this prompt (optional)",
+                        type=["png", "jpg", "jpeg", "webp"],
+                        key=f"upload_{cluster}_{i}",
+                    )
+                    if uploaded is not None:
+                        st.session_state.prompt_uploads[upload_key] = uploaded
+                        st.image(uploaded, caption="Attached image", width=200)
+                    elif upload_key in st.session_state.prompt_uploads:
+                        # Show previously attached image (if widget cleared but state retained)
+                        st.image(st.session_state.prompt_uploads[upload_key], caption="Attached image", width=200)
             if checked:
                 selected_for_cluster.append(prompt)
         selections[cluster] = selected_for_cluster
@@ -236,17 +274,31 @@ if st.session_state.cluster_prompts:
                 st.warning("Please select at least one prompt to store.")
             else:
                 ctx = st.session_state.campaign_context
+                # Collect only uploads for selected prompts
+                uploads = st.session_state.get("prompt_uploads", {})
+                # Build a dict of {upload_key: bytes} for selected prompts
+                prompt_images: dict[str, bytes] = {}
+                for cluster, prompt_list in chosen.items():
+                    for i, prompt in enumerate(st.session_state.cluster_prompts.get(cluster, [])):
+                        if prompt in prompt_list:
+                            upload_key = f"{cluster}_{i}"
+                            if upload_key in uploads and uploads[upload_key] is not None:
+                                prompt_images[upload_key] = uploads[upload_key].getvalue()
                 with st.spinner("Storing approved prompts to shared library..."):
                     result = store_approved_prompts(
                         product_name=ctx.get("product_name", ""),
                         brand_name=ctx.get("brand_name", ""),
                         category=ctx.get("category", ""),
                         selected_prompts=chosen,
+                        prompt_images=prompt_images,
                         campaign_payload=ctx,
                     )
                 st.session_state.selected_prompts = chosen
                 st.session_state.cluster_prompts = {}
-                _add_message("assistant", f"✅ Prompts stored to shared library. Record ID: `{result.get('record_id', '?')}`")
+                st.session_state.prompt_uploads = {}
+                img_count = result.get("images_uploaded", 0)
+                img_note = f" ({img_count} image(s) attached)" if img_count else ""
+                _add_message("assistant", f"✅ Prompts stored to shared library{img_note}. Record ID: `{result.get('record_id', '?')}`")
                 st.rerun()
 
 # ---------------------------------------------------------------------------
