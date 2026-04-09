@@ -33,8 +33,8 @@ class PromptBuilder:
             "subject_positions": "product centered prominently"
         },
         "solution_first": {
-            "composition": "left side problem list, right side product",
-            "subject_positions": "person on left, product on right"
+            "composition": "split layout, left side shows the solution or positive outcome text, right side shows product as the hero answer",
+            "subject_positions": "product on right as hero, solution text prominently on left, clear visual contrast between problem and answer"
         },
         "doctor_first": {
             "composition": "right side doctor, left side benefit points, high-impact trust-building headline area at top",
@@ -48,7 +48,7 @@ class PromptBuilder:
             "environment": "real-life discomfort setting, slightly tense atmosphere",
             "camera": "eye-level emotional storytelling shot",
             "lighting": "slightly dramatic, soft shadow lighting",
-            "subject_positions": "person on left showing problem, empty space for product on right",
+            "subject_positions": "left side shows the problem statement in bold text, right side shows the product as the clear solution and answer",
             "props": "subtle lifestyle elements indicating discomfort"
         }
     }
@@ -130,6 +130,15 @@ class PromptBuilder:
                 # Optional Debug Log (STEP 6)
                 print(f"[PromptBuilder] Selected benefits: {selected_benefits}")
 
+            # 5b. Solutions injection — solution_first cluster only
+            if cluster_id == "solution_first":
+                solutions = payload.get("solutions", [])
+                if solutions:
+                    sample_solutions = random.sample(solutions, min(2, len(solutions)))
+                    solution_text = ", ".join(sample_solutions)
+                    components.append(f"key solutions featured: {solution_text}")
+                    components.append("visual emphasis on the solution and positive outcome")
+
             # 6. Ingredient Randomization (STEP 3)
             selected_ingredients = []
             if cluster_id == "ingredient_first":
@@ -151,6 +160,11 @@ class PromptBuilder:
             
             if cluster_id == "problem_first":
                 print("[Cluster] problem_first active")
+                problems = payload.get("problems", [])
+                if problems:
+                    problem_text = random.choice(problems)
+                    components.append(f"left side bold text overlay: '{problem_text}'")
+                    components.append("right side: product shown prominently as the direct solution to the stated problem")
                 components.append("person showing visible discomfort, worry or stress, tense posture, expressive face")
                 components.append("headline phrased as a problem or concern, emotionally triggering")
             
@@ -162,7 +176,7 @@ class PromptBuilder:
             if cluster_id == "problem_first" or emotion == "panic":
                 font_preset = next((p for p in FONT_PRESETS if p["name"] == "panic"), FONT_PRESETS[0])
             elif emotion == "calm":
-                font_preset = next((p for p in FONT_PRESETS if p["name"] == "calm"), FONT_PRESETS[4])
+                font_preset = next((p for p in FONT_PRESETS if p["name"] == "calm"), FONT_PRESETS[0])
             else:
                 font_preset = FONT_PRESETS[i % len(FONT_PRESETS)]
                 
