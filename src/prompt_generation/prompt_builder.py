@@ -22,6 +22,10 @@ print("[Config] Fonts Loaded:", len(FONT_PRESETS))
 
 PROMPT_CONFIG = load_prompts()
 
+# Variation indices (within a 5-variation cycle) that get a product name
+# text overlay — 4 out of 5 = 80%
+_NAME_OVERLAY_INDICES = {0, 1, 2, 3}
+
 # ---------------------------------------------------------------------------
 # Competitor-intelligence-derived winning patterns
 # Based on analysis of OZiva, Woolah, Plix, Kapiva ads + our own winning ads
@@ -190,7 +194,9 @@ class PromptBuilder:
         print("[PromptBuilder] Building prompts for cluster:", cluster_id)
         prompts = []
 
-        product_name = payload.get("product_name", "product")
+        product_name = payload.get("product_name", "").strip()
+        if not product_name:
+            raise ValueError("product_name is required and cannot be empty")
         benefits     = payload.get("benefits", [])
         solutions    = payload.get("solutions", [])
         problems     = payload.get("problems", [])
@@ -252,7 +258,7 @@ class PromptBuilder:
             else:
                 components.append("product-focused scene, no human subject, emphasizing product clarity and brand authority")
 
-            # ── 6. Product name ───────────────────────────────────────────────
+            # ── 6. Product name (appears twice: scene + brand anchor) ─────────
             components.append(f"featuring {product_name}")
 
             # ── 7. Benefits (randomized 3) ────────────────────────────────────
@@ -317,26 +323,49 @@ class PromptBuilder:
             else:
                 components.append("real-life contextual background, slightly blurred for depth of field")
 
-            # ── 14. Typography signals ────────────────────────────────────────
-            if cluster_id == "problem_first" or emotion in ("fear", "panic", "urgency", "shock"):
-                font_preset = next((p for p in FONT_PRESETS if p["name"] == "panic"), FONT_PRESETS[0])
-            elif emotion in ("calm", "relief", "hope", "natural"):
-                font_preset = next((p for p in FONT_PRESETS if p["name"] == "calm"), FONT_PRESETS[0])
-            elif cluster_id == "doctor_first" or emotion in ("trust", "confidence", "authority"):
-                font_preset = next((p for p in FONT_PRESETS if p["name"] == "trust"), FONT_PRESETS[0])
-            else:
-                font_preset = FONT_PRESETS[i % len(FONT_PRESETS)]
+            # ── 14. Typography signals — cluster-primary, hook-secondary ─────
+            # Each cluster has a distinct typographic personality derived from
+            # competitor analysis: premium (product), calm (solution), trust
+            # (doctor), natural (ingredient), panic (problem)
+            CLUSTER_FONT_MAP = {
+                "product_first":    "premium",    # aspirational, brand-forward
+                "solution_first":   "calm",       # warm, hopeful, relief
+                "doctor_first":     "trust",      # clinical authority, credibility
+                "ingredient_first": "natural",    # earthy, organic, curiosity
+                "problem_first":    "panic",      # urgent, alarming, fear-driven
+            }
+            preset_name = CLUSTER_FONT_MAP.get(cluster_id, "premium")
+            # Hook override: benefit variation of problem_first pivots to calm
+            # (resolution moment — the ad is showing the answer, not the fear)
+            if cluster_id == "problem_first" and hook_type == "benefit":
+                preset_name = "calm"
+            # Hook override: authority hook in non-doctor cluster → trust blend
+            if hook_type == "authority" and cluster_id != "doctor_first":
+                preset_name = "trust"
+            font_preset = next((p for p in FONT_PRESETS if p["name"] == preset_name), FONT_PRESETS[0])
 
             print("[FontPreset]", font_preset["name"])
             components.append(f"headline text: {font_preset['headline']}")
             components.append(f"supporting text: {font_preset['sub']}")
-            components.append(f"CTA text: {font_preset['cta']}")
             components.append("clean professional typography hierarchy, high readability, low text density, text does not overwhelm the visual")
+
+            # ── 14b. Product name text overlay (80% of variations) ────────────
+            if (i % 5) in _NAME_OVERLAY_INDICES:
+                components.append(f"visible product name text overlay: '{product_name}' rendered in bold legible typography, prominently placed, easy to read at a glance")
 
             # ── 15. Headline tone ─────────────────────────────────────────────
             components.append(f"headline tone: {headline_tone}, emotionally resonant, concise and punchy")
 
-            # ── 16. Quality and format modifiers ─────────────────────────────
+            # ── 16. Brand anchor — reinforces product name a second time ─────
+            components.append(f"product name clearly visible: {product_name}, brand identity reinforced throughout the composition")
+
+            # ── 17. Product image preservation (critical) ─────────────────────
+            components.extend([
+                "IMPORTANT: preserve the exact product packaging, label, logo, and design — do NOT alter, modify, replace, reimagine, or reinterpret the product in any way",
+                "the product must appear exactly as provided with no changes to its shape, color, text, or branding",
+            ])
+
+            # ── 17. Quality and format modifiers ─────────────────────────────
             components.extend([
                 "clear visual hierarchy, single focal point, no cluttered elements",
                 "clean advertisement composition",

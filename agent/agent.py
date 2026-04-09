@@ -8,7 +8,7 @@ import os
 import re
 from dataclasses import dataclass, field
 
-from groq import Groq, BadRequestError
+from groq import Groq, BadRequestError, APIStatusError
 from dotenv import load_dotenv
 
 from agent.system_prompt import SYSTEM_PROMPT
@@ -16,9 +16,10 @@ from agent.tool_registry import TOOLS, execute_tool
 
 load_dotenv()
 
-# Primary model + fallback for tool_use_failed errors
+# Primary model — large, capable, used for all normal turns
 _PRIMARY_MODEL  = "llama-3.3-70b-versatile"
-_FALLBACK_MODEL = "mixtral-8x7b-32768"
+# Fallback for tool_use_failed (bad JSON from primary)
+_FALLBACK_MODEL = "llama-3.1-8b-instant"
 
 
 # ---------------------------------------------------------------------------
@@ -64,6 +65,47 @@ def _parse_tool_arguments(raw: str) -> dict:
             return json.loads(fallback)
         except json.JSONDecodeError:
             return {}
+
+
+def _summarise_tool_result(tool_name: str, result: dict) -> dict:
+    """
+    Replace bulky tool results with a compact summary before storing in history.
+    Full data is handled by the UI/session_state — the model only needs to know
+    whether the call succeeded and a brief description of what was produced.
+    """
+    if tool_name == "generate_prompts" and result.get("status") == "success":
+        cluster_prompts = result.get("cluster_prompts", {})
+        summary = {c: f"{len(p)} prompts generated" for c, p in cluster_prompts.items()}
+        return {
+            "status": "success",
+            "message": "Prompts generated successfully. The UI will display them for the user to select.",
+            "clusters": summary,
+        }
+
+    if tool_name == "generate_creative" and result.get("status") == "success":
+        images = result.get("images", [])
+        return {
+            "status": "success",
+            "message": f"{len(images)} ad image(s) generated and shown to the user for approval.",
+            "image_count": len(images),
+        }
+
+    if tool_name == "lookup_product" and result.get("status") == "found":
+        p = result.get("product", {})
+        return {
+            "status": "found",
+            "product_name": p.get("product_name", ""),
+            "brand_name": p.get("brand_name", ""),
+            "category": p.get("category", ""),
+            "has_benefits": bool(p.get("benefits")),
+            "has_problems": bool(p.get("problems")),
+            "has_ingredients": bool(p.get("ingredients")),
+            # Keep full product data so agent can offer autofill
+            "product": p,
+        }
+
+    # Default — return as-is for small results (e.g. not_found, errors)
+    return result
 
 
 @dataclass
@@ -124,9 +166,28 @@ class AdAgent:
                 if "tool_use_failed" in str(e) and self.model != _FALLBACK_MODEL:
                     print(f"[Agent] tool_use_failed on {self.model} — retrying with {_FALLBACK_MODEL}")
                     self.model = _FALLBACK_MODEL
-                    # Remove the last user message and re-append so history stays clean
-                    # (the failed assistant turn was never appended)
                     continue
+                raise
+            except APIStatusError as e:
+                # 413 = request too large — aggressively trim tool result messages
+                # (they hold the bulk of tokens: full prompt JSON, image paths, etc.)
+                if e.status_code == 413:
+                    before = len(self.conversation_history)
+                    # Drop all tool-role messages except the very last one
+                    tool_indices = [i for i, m in enumerate(self.conversation_history) if m.get("role") == "tool"]
+                    if len(tool_indices) > 1:
+                        # Remove all but the last tool result
+                        drop = set(tool_indices[:-1])
+                        self.conversation_history = [m for i, m in enumerate(self.conversation_history) if i not in drop]
+                        print(f"[Agent] 413 — dropped {len(drop)} old tool results ({before} → {len(self.conversation_history)} turns), retrying")
+                        continue
+                    elif len(self.conversation_history) > 4:
+                        # No tool results to drop — hard-trim to last 4 turns
+                        self.conversation_history = self.conversation_history[-4:]
+                        print(f"[Agent] 413 — hard-trimmed history to 4 turns, retrying")
+                        continue
+                    else:
+                        raise
                 raise
 
             message       = response.choices[0].message
@@ -172,7 +233,7 @@ class AdAgent:
                     self.conversation_history.append({
                         "role":         "tool",
                         "tool_call_id": tc.id,
-                        "content":      json.dumps(result),
+                        "content":      json.dumps(_summarise_tool_result(tc.function.name, result)),
                     })
 
             else:
