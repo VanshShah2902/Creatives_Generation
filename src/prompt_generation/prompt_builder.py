@@ -94,7 +94,7 @@ CLUSTER_VISUAL_PATTERNS = {
     ],
     "doctor_first": [
         "doctor face as primary emotional trust anchor taking 50% of frame, product on desk in foreground",
-        "doctor in white coat pointing to product, clinical background, credential badge visible",
+        "doctor in white coat pointing to product, clinical background, credential badge visible, no stethoscope",
         "split: doctor recommendation quote on left in large serif, product hero on right with glow",
         "doctor holding product at eye level, direct eye contact, clean clinical background, trust focus",
         "scientific diagram or ingredient chart in background, doctor and product in foreground as authority",
@@ -249,7 +249,7 @@ class PromptBuilder:
 
             # ── 5. Subject strategy ──────────────────────────────────────────
             if cluster_id == "doctor_first":
-                components.append("featuring a professional Indian doctor in white coat as subject, authoritative and reassuring")
+                components.append("featuring a professional Indian doctor in white coat as subject, authoritative and reassuring, NO stethoscope, no medical equipment around neck")
             elif cluster_id == "problem_first":
                 # problem_first always has a person showing the problem
                 components.append("featuring a natural looking middle-aged Indian person showing health distress")

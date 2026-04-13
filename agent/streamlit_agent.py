@@ -54,6 +54,18 @@ def _display_images(image_paths: list):
                 st.warning(f"Image not found: {path}")
 
 
+def _save_reference_image(uploaded_file) -> str:
+    """Save a Streamlit UploadedFile to a temp path and return the path."""
+    import uuid
+    out_dir = os.path.join("outputs", "temp")
+    os.makedirs(out_dir, exist_ok=True)
+    ext = os.path.splitext(uploaded_file.name)[-1] or ".png"
+    path = os.path.join(out_dir, f"reference_{uuid.uuid4().hex[:8]}{ext}")
+    with open(path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+    return path
+
+
 def _send(text: str):
     """Add user message, call agent, render assistant reply."""
     _add_message("user", text)
@@ -69,6 +81,9 @@ def _send(text: str):
 
         if response.cluster_prompts:
             st.session_state.cluster_prompts = response.cluster_prompts
+
+        if response.template_prompts:
+            st.session_state.template_prompts = response.template_prompts
 
         if response.campaign_context:
             st.session_state.campaign_context.update(response.campaign_context)
@@ -114,6 +129,12 @@ if "view_library" not in st.session_state:
 if "prompt_uploads" not in st.session_state:
     st.session_state.prompt_uploads = {}  # key: "cluster_i" → UploadedFile
 
+if "template_prompts" not in st.session_state:
+    st.session_state.template_prompts = []  # list of 4 doctor-template variation descriptions
+
+if "show_reference_uploader" not in st.session_state:
+    st.session_state.show_reference_uploader = False
+
 # ---------------------------------------------------------------------------
 # Header
 # ---------------------------------------------------------------------------
@@ -123,7 +144,7 @@ st.caption("Your AI-powered advertising assistant. Click a button below to get s
 # ---------------------------------------------------------------------------
 # Action buttons
 # ---------------------------------------------------------------------------
-col1, col2, col3, col_reset = st.columns([1, 1, 1, 2])
+col1, col2, col3, col4, col5, col_reset = st.columns([1, 1, 1, 1, 1, 1])
 
 with col1:
     if st.button("✨ Generate Prompts", use_container_width=True):
@@ -136,6 +157,28 @@ with col2:
         _send("Generate Ad Images")
 
 with col3:
+    if st.button("🩺 Doctor Template Ad", use_container_width=True):
+        st.session_state.view_library = False
+        _send(
+            "Generate a Doctor Template Ad. "
+            "Step 1: Ask which layout — 'cards' (ingredient cards on the right, like a list) "
+            "or 'table' (ingredient table at the bottom with per-sachet and daily columns). "
+            "Step 2: Collect brand name, product name, up to 3 ingredients "
+            "(for each: ingredient name, dose per sachet, daily dose, and its health benefit), "
+            "price, pack size (e.g. 50 Sachets), discount offer, and tagline. "
+            "Step 3: Ask whether the user wants (a) just the layout prompt/description, "
+            "or (b) the actual image rendered. "
+            "If they want the image, also ask for the doctor/person image file path "
+            "and the product image file path — these are optional, leave blank if not available. "
+            "Then call generate_template_creative with generate_image=true or false accordingly."
+        )
+
+with col4:
+    if st.button("🔍 Analyse Reference Image", use_container_width=True):
+        st.session_state.view_library = False
+        st.session_state.show_reference_uploader = not st.session_state.show_reference_uploader
+
+with col5:
     if st.button("📚 View Approved Ads", use_container_width=True):
         st.session_state.view_library = True
 
@@ -149,9 +192,51 @@ with col_reset:
         st.session_state.campaign_context = {}
         st.session_state.view_library = False
         st.session_state.prompt_uploads = {}
+        st.session_state.template_prompts = []
+        st.session_state.show_reference_uploader = False
         st.rerun()
 
 st.divider()
+
+# ---------------------------------------------------------------------------
+# Reference Image Uploader widget
+# ---------------------------------------------------------------------------
+if st.session_state.show_reference_uploader:
+    with st.container(border=True):
+        st.markdown("### 🔍 Analyse Reference Image")
+        st.caption("Upload any ad image — competitor creative, winning ad, or inspiration. "
+                   "Gemini will analyse the visual style and generate 4 prompt variations that replicate it.")
+
+        ref_file = st.file_uploader(
+            "Choose a reference image",
+            type=["png", "jpg", "jpeg", "webp"],
+            key="ref_image_upload",
+        )
+
+        if ref_file:
+            col_prev, col_form = st.columns([1, 2])
+            with col_prev:
+                st.image(ref_file, caption="Reference image", use_container_width=True)
+            with col_form:
+                product_ctx = st.text_input(
+                    "Product / brand context (optional)",
+                    placeholder="e.g. Dr. Bimal's Arjuna Cardio Care Tea",
+                    key="ref_product_ctx",
+                )
+                st.caption("Adding a product name helps Gemini weave it into the generated prompts.")
+
+                if st.button("✨ Analyse & Generate 4 Prompts", type="primary", use_container_width=True):
+                    with st.spinner("Saving image and sending to Gemini for analysis..."):
+                        saved_path = _save_reference_image(ref_file)
+
+                    st.session_state.show_reference_uploader = False
+                    _send(
+                        f"Please analyse the reference image at this path: '{saved_path}' "
+                        f"and generate 4 prompt variations. "
+                        f"Product context: '{product_ctx}'. "
+                        f"Call the analyse_reference_image tool with image_path='{saved_path}' "
+                        f"and product_context='{product_ctx}'."
+                    )
 
 # ---------------------------------------------------------------------------
 # Library view
@@ -216,6 +301,60 @@ for msg in st.session_state.messages:
         st.markdown(msg["content"])
         if msg.get("images"):
             _display_images(msg["images"])
+
+# ---------------------------------------------------------------------------
+# Doctor Template — prompt variation widget
+# ---------------------------------------------------------------------------
+if st.session_state.template_prompts:
+    st.markdown("### 🩺 Doctor Template Prompts — 4 Variations")
+    st.caption("Each variation keeps the same layout structure with a different mood/style. Select any to generate as an image.")
+
+    selected_template_indices = []
+    for idx, prompt_desc in enumerate(st.session_state.template_prompts):
+        # Extract variation label from first line
+        first_line = prompt_desc.split("\n")[0]
+        col_chk, col_txt = st.columns([0.04, 0.96])
+        with col_chk:
+            checked = st.checkbox("", key=f"tprompt_{idx}", label_visibility="collapsed")
+        with col_txt:
+            with st.expander(f"**{first_line}**"):
+                st.text(prompt_desc)
+        if checked:
+            selected_template_indices.append(idx)
+
+    tp_col1, tp_col2 = st.columns(2)
+    with tp_col1:
+        if st.button("🖼️ Generate Images from Selected Variations", type="primary", use_container_width=True):
+            if not selected_template_indices:
+                st.warning("Please select at least one variation.")
+            else:
+                chosen = [st.session_state.template_prompts[i] for i in selected_template_indices]
+                st.session_state.template_prompts = []
+                _send(f"Generate images for these {len(chosen)} selected doctor template variations. "
+                      f"Ask for the doctor image path and product image path (both optional), "
+                      f"then call generate_template_creative with generate_image=true. "
+                      f"Variations selected:\n\n" + "\n\n---\n\n".join(chosen))
+    with tp_col2:
+        if st.button("✅ Save Template Prompts to Library", use_container_width=True):
+            if not selected_template_indices:
+                st.warning("Please select at least one variation to save.")
+            else:
+                chosen = [st.session_state.template_prompts[i] for i in selected_template_indices]
+                ctx = st.session_state.campaign_context
+                selected_dict = {f"doctor_template_v{i+1}": [chosen[n]] for n, i in enumerate(selected_template_indices)}
+                with st.spinner("Saving template prompts..."):
+                    result = store_approved_prompts(
+                        product_name=ctx.get("product_name", ""),
+                        brand_name=ctx.get("brand_name", ""),
+                        category=ctx.get("category", ""),
+                        selected_prompts=selected_dict,
+                        campaign_payload=ctx,
+                    )
+                st.session_state.template_prompts = []
+                _add_message("assistant", f"✅ Template prompts saved to library. Record ID: `{result.get('record_id', '?')}`")
+                st.rerun()
+
+    st.divider()
 
 # ---------------------------------------------------------------------------
 # Prompt selection widget
