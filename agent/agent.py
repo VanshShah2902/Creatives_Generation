@@ -82,8 +82,26 @@ def _summarise_tool_result(tool_name: str, result: dict) -> dict:
             "clusters": summary,
         }
 
-    if tool_name == "generate_creative" and result.get("status") == "success":
+    if tool_name == "analyse_reference_image" and result.get("status") == "success":
+        return {
+            "status": "success",
+            "message": f"{result.get('raw_prompt_count', 4)} prompt variations generated from the reference image. The UI will display them for the user to select.",
+            "analysis_summary": result.get("analysis", "")[:300],  # keep short
+        }
+
+    if tool_name in ("generate_creative", "generate_template_creative") and result.get("status") == "success":
+        # Prompt-only mode — return descriptions so the agent can show them
+        if result.get("prompt_only"):
+            prompts = result.get("prompts", [])
+            return {
+                "status": "success",
+                "prompt_only": True,
+                "prompt_count": len(prompts),
+                "prompt_description": result.get("prompt_description", ""),
+                "message": f"{len(prompts)} prompt variation(s) generated. Show each one to the user.",
+            }
         images = result.get("images", [])
+        self._pending_images = images   # ensure all 4 are captured
         return {
             "status": "success",
             "message": f"{len(images)} ad image(s) generated and shown to the user for approval.",
@@ -113,6 +131,7 @@ class AgentResponse:
     """Structured response returned to the UI after each agent turn."""
     text: str
     cluster_prompts: dict = field(default_factory=dict)
+    template_prompts: list = field(default_factory=list)   # 3 doctor-template / reference variation descriptions
     images: list = field(default_factory=list)
     awaiting_approval: bool = False
     approval_payload: dict = field(default_factory=dict)
@@ -148,6 +167,7 @@ class AdAgent:
         })
 
         cluster_prompts: dict = {}
+        template_prompts: list = []
         images: list = []
         campaign_context: dict = {}
 
@@ -226,6 +246,17 @@ class AdAgent:
                             if k not in ("num_variations", "product_image", "person_image")
                         }
 
+                    if tc.function.name == "generate_template_creative" and result.get("status") == "success":
+                        if result.get("prompt_only"):
+                            # Capture the 4 variation descriptions for the UI widget
+                            template_prompts = result.get("prompts", [])
+                        else:
+                            images = result.get("images", [])
+                            self._pending_images = images
+
+                    if tc.function.name == "analyse_reference_image" and result.get("status") == "success":
+                        template_prompts = result.get("prompts", [])
+
                     if tc.function.name == "generate_creative" and result.get("status") == "success":
                         images = result.get("images", [])
                         self._pending_images = images
@@ -244,6 +275,7 @@ class AdAgent:
                 return AgentResponse(
                     text=text,
                     cluster_prompts=cluster_prompts,
+                    template_prompts=template_prompts,
                     images=[img["path"] for img in images],
                     awaiting_approval=awaiting_approval,
                     approval_payload=approval_payload,
