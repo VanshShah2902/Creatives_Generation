@@ -16,3 +16,6 @@ def load_emotions():
 
 def load_prompts():
     return load_json("prompts.json")
+
+def load_ingredient_benefits():
+    return load_json("ingredient_benefits.json")

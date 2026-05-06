@@ -1,4 +1,5 @@
 from src.llm.groq_client import GroqClient
+from src.compliance.nmc_filter import sanitise_headline
 import json
 import re
 
@@ -26,7 +27,17 @@ class CopyGenerator:
         INGREDIENTS: {ingredients}
         AD TYPE: {cluster}
 
-        RULES:
+        NMC COMPLIANCE RULES (MANDATORY — India National Medical Commission guidelines):
+        - NEVER use words: cures, treats, heals, eliminates, reverses, miracle, guaranteed, 100% effective
+        - NEVER say "prevents [disease]", "cures [disease]", "treats [disease]"
+        - NEVER make absolute health outcome promises — use "helps", "supports", "may help", "promotes"
+        - NEVER imply the product replaces medical advice or prescription
+        - For doctor-endorsed products: say "formulated by" NOT "prescribed by"
+        - Health benefits must be qualified: "Supports healthy cholesterol" NOT "Lowers cholesterol"
+        - Compliant examples: "Supports Heart Health", "Helps Maintain Healthy Cholesterol", "Formulated for Wellness"
+        - Non-compliant (FORBIDDEN): "Cures Heart Disease", "Lowers Cholesterol Guaranteed", "Prescribed by Doctors"
+
+        COPYWRITING RULES:
         - Headline must be short, bold, attention-grabbing
         - Subheadline must support benefits clearly
         - Subheadline must be maximum 6-10 words
@@ -67,15 +78,19 @@ class CopyGenerator:
             print("[CopyGenerator] Cleaned Response:", response[:300])
 
             copy = json.loads(response)
-            
+
+            # ── NMC compliance pass on generated copy ─────────────────────
+            copy["headline"]    = sanitise_headline(copy.get("headline", ""))
+            copy["subheadline"] = sanitise_headline(copy.get("subheadline", ""))
+
             subheadline = copy.get("subheadline", "")
-            
+
             # Hard truncate if too long
             words = subheadline.split()
             if len(words) > 10:
                 subheadline = " ".join(words[:10])
                 copy["subheadline"] = subheadline
-                
+
             return copy
         except Exception as e:
             print("[CopyGenerator ERROR]:", e)

@@ -26,7 +26,8 @@ class CampaignInputProcessor:
             "offer": input_data.get("offer", ""),
             "brand_name": input_data.get("brand_name", ""),
             "headline": input_data.get("headline", ""),
-            "subheadline": input_data.get("subheadline", "")
+            "subheadline": input_data.get("subheadline", ""),
+            "theme": input_data.get("theme", "KR_2D"),
         }
         
         print(f"[InputProcessor] Generated payload for {payload['product_name']}")

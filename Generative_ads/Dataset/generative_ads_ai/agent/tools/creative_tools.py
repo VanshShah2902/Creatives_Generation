@@ -13,6 +13,38 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 from generation_engine.pipeline_runner import AdGenerationPipeline
+from src.compliance.nmc_filter import audit_payload
+
+# ---------------------------------------------------------------------------
+# Hardcoded Arjuna Cardio Care Tea product data
+# Source: "15 Short Benefits Per Ingredient" document
+# Used when user does not provide these fields (default flow)
+# ---------------------------------------------------------------------------
+_ARJUNA_INGREDIENTS = [
+    "Tez Patta", "Elaichi", "Clove", "Shankpushpi", "Nagarmotha",
+    "Brahmi", "Ashwagandha", "Dalchini", "Arjun Chal", "Harad",
+    "Tulsi", "Sonth", "Saunf", "Black Tea", "Green Tea",
+]
+
+_ARJUNA_BENEFITS = [
+    "Supports heart health",
+    "Helps maintain healthy cholesterol levels",
+    "May help with stress management",
+    "Supports healthy blood circulation",
+    "Helps boost energy and stamina",
+]
+
+_ARJUNA_SOLUTIONS = [
+    "Supports cardiovascular well-being",
+    "Helps maintain healthy blood pressure",
+    "Supports natural stress relief",
+]
+
+_ARJUNA_PROBLEMS = [
+    "Feeling tired and low on energy",
+    "Concerned about heart health",
+    "Struggling with stress and anxiety",
+]
 
 _pipeline: AdGenerationPipeline | None = None
 
@@ -27,34 +59,44 @@ def _get_pipeline() -> AdGenerationPipeline:
 def generate_prompts(
     product_name: str,
     brand_name: str,
-    category: str,
-    benefits: list,
-    problems: list,
-    solutions: list,
-    ingredients: list,
-    price: str,
-    offer: str,
+    price: str = "",
+    offer: str = "",
+    theme: str = "KR_2D",
     num_variations: int = 5,
     product_image: str = "",
     person_image: str = "",
+    # kept for backward compat — ignored, autofilled from product document
+    category: str = "Ayurvedic Health Tea",
+    benefits: list = None,
+    problems: list = None,
+    solutions: list = None,
+    ingredients: list = None,
 ) -> dict:
     """
     Runs the prompt generation stage of the pipeline.
-    Returns all cluster prompts grouped by cluster so the user can select.
-
-    Returns:
-        {
-            "status": "success",
-            "cluster_prompts": {
-                "product_first": ["prompt1", "prompt2", ...],
-                "solution_first": [...],
-                ...
-            }
-        }
+    benefits/problems/solutions/ingredients are autofilled from the
+    hardcoded Arjuna Cardio Care Tea ingredient document if not provided.
     """
+    # Autofill from document — ignore user-provided empty lists
+    benefits    = benefits    if benefits    else _ARJUNA_BENEFITS
+    problems    = problems    if problems    else _ARJUNA_PROBLEMS
+    solutions   = solutions   if solutions   else _ARJUNA_SOLUTIONS
+    ingredients = ingredients if ingredients else _ARJUNA_INGREDIENTS
+
+    # NMC compliance pass
+    safe_payload = audit_payload({
+        "benefits":  benefits,
+        "solutions": solutions,
+        "problems":  problems,
+    })
+    benefits  = safe_payload["benefits"]
+    solutions = safe_payload["solutions"]
+    problems  = safe_payload["problems"]
+
     campaign = _build_campaign_json(
         product_name, brand_name, category, benefits, problems,
-        solutions, ingredients, price, offer, product_image, person_image
+        solutions, ingredients, price, offer, product_image, person_image,
+        theme=theme,
     )
     input_path = _save_campaign(campaign)
 
@@ -178,7 +220,8 @@ def lookup_product(product_name: str) -> dict:
 
 def _build_campaign_json(
     product_name, brand_name, category, benefits, problems,
-    solutions, ingredients, price, offer, product_image, person_image
+    solutions, ingredients, price, offer, product_image, person_image,
+    theme: str = "KR_2D",
 ) -> dict:
     return {
         "product_name": product_name,
@@ -193,6 +236,7 @@ def _build_campaign_json(
         "product_image": product_image,
         "person_image": person_image,
         "creative_type": "standard",
+        "theme": theme,
     }
 
 
@@ -376,21 +420,24 @@ def generate_template_creative(
 # Reference Image Analysis → 4 Prompt Variations
 # ---------------------------------------------------------------------------
 
-def analyse_reference_image(image_path: str, product_context: str = "") -> dict:
+def analyse_reference_image(image_path: str, product_context: str = "", my_product: dict = None) -> dict:
     """
-    Send a reference advertisement image to Gemini Vision for analysis.
-    Returns 4 prompt variations that replicate the same visual style/mood
-    with slight differences in emphasis and lighting.
+    Analyse a reference ad image with Gemini Vision and return a single
+    ready-to-use image generation prompt that recreates the same visual style,
+    layout, composition, colors, and mood — with no product substitution.
+
+    The prompt can be fed directly to an image generation model (Gemini Imagen,
+    Midjourney, DALL-E, etc.) to produce a similar-looking ad creative.
 
     Args:
-        image_path:      Path to the uploaded reference image (saved to outputs/temp/)
-        product_context: Optional product/brand name to weave into the prompts
+        image_path: Path to the uploaded reference image.
+        product_context: Unused — kept for backward compat.
+        my_product:      Unused — kept for backward compat.
 
     Returns:
-        {"status": "success", "prompts": [...4 prompt strings...], "analysis": "..."}
+        {"status": "success", "prompt": "...", "analysis": "..."}
     """
     import io
-    import re
     import google.generativeai as genai
     from PIL import Image as PILImage
 
@@ -401,136 +448,69 @@ def analyse_reference_image(image_path: str, product_context: str = "") -> dict:
     if not image_path or not os.path.exists(image_path):
         return {"status": "error", "message": f"Reference image not found: {image_path}"}
 
-    # Load + resize to keep Gemini payload small
     img = PILImage.open(image_path).convert("RGB")
     img.thumbnail((1024, 1024), PILImage.Resampling.LANCZOS)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     image_bytes = buf.getvalue()
 
-    product_line = (
-        f"\nIncorporate this product/brand into the prompts: {product_context}"
-        if product_context else ""
-    )
+    analysis_prompt = """You are an expert visual analyst and image generation prompt engineer.
 
-    analysis_prompt = f"""You are an expert ad creative analyst and prompt engineer.
+Look at this advertisement image carefully. Your job is to write a single, detailed image generation prompt that would recreate this exact image — same layout, same composition, same colors, same mood, same visual style, same element positions.
 
-Analyse this advertisement image carefully and extract:
-1. Layout & composition — where subjects, product, text/panels are placed (as % of frame)
-2. Color palette — primary, secondary, accent colors (name hex or RGB)
-3. Background type — marble, plain, gradient, textured, etc.
-4. Lighting style — studio, natural, dramatic, soft, etc.
-5. Typography style — bold/light, serif/sans-serif, size hierarchy visible
-6. Key ingredients, dosage, and benefit text visible in the image
-7. Banner/footer text visible at the bottom
-{product_line}
+Analyse:
+- Overall layout and composition (where every element sits, as % of frame)
+- Exact color palette (name every color you see)
+- Background style (marble, gradient, plain, textured — describe the exact look)
+- Lighting (direction, quality, mood)
+- Any people/subjects (position, pose, clothing, expression — describe without naming)
+- Product/object placement (position, size, angle, any glow/shadow effects)
+- Text/badge panels (style, position, how many, shape)
+- Typography style (bold/light, serif/sans, color hierarchy)
+- Footer/banner (position, color, content style)
+- Any decorative elements (icons, lines, botanical art, gradients, overlays)
+- Overall mood and aesthetic
 
-Then generate EXACTLY 3 structured ad prompts replicating the SAME layout as the reference image.
-DO NOT describe people/doctors in detail — just specify their position and pose briefly.
-Each prompt must use this EXACT structured format:
+Then write ONE complete image generation prompt (200–350 words) that captures ALL of this so precisely that an AI image model would recreate the same visual. Use placeholder text like "[Product Name]", "[Brand Name]", "[Ingredient 1]" etc. where specific text appears.
 
-Brand: [brand name]  |  Product: [product name]
+Return your response in exactly this format:
 
-Ingredients:
-  • [Ingredient 1] — [dosage if visible] — [benefit]
-  • [Ingredient 2] — [dosage if visible] — [benefit]
-  • [Ingredient 3] — [dosage if visible] — [benefit]
-
-Layout:
-  • [canvas size, e.g. 1080×1080 px]
-  • [subject position and size as % of canvas, pose in 5 words max, NO stethoscope]
-  • [product box position and size]
-  • [panel/table/card description — colors, borders, columns]
-  • [banner/footer description and text]
-  • [font style description]
-
-Variation details:
-  • Background: [describe background texture/color]
-  • Doctor pose: [5 words max — e.g. "arms folded, facing camera"]
-  • Lighting: [lighting style]
-  • Accent style: [accent color treatment]
-
-Return your response in this EXACT format:
 ANALYSIS:
-[your analysis here]
+[Your detailed visual breakdown — every element, color, position, style]
 
-PROMPT_1:
-V1 — Faithful to Original
-[structured prompt using above format]
-
-PROMPT_2:
-V2 — Warmer & Approachable
-[structured prompt using above format]
-
-PROMPT_3:
-V3 — Clean & Minimal
-[structured prompt using above format]
-"""
+PROMPT:
+[Your complete image generation prompt — ready to paste into an image model]"""
 
     try:
         genai.configure(api_key=api_key)
-        # Use gemini-2.5-flash for vision analysis (fast, multimodal, returns text)
         model = genai.GenerativeModel("gemini-2.5-flash")
-        print("[AnalyseReference] Sending image to Gemini for analysis...")
+        print("[AnalyseReference] Sending image to Gemini...")
 
-        parts = [
+        response = model.generate_content([
             {"inline_data": {"mime_type": "image/png", "data": image_bytes}},
             {"text": analysis_prompt},
-        ]
-        response = model.generate_content(parts)
+        ])
         raw_text = response.text.strip()
-        print(f"[AnalyseReference] Gemini response received ({len(raw_text)} chars)")
+        print(f"[AnalyseReference] Response received ({len(raw_text)} chars)")
 
-        # Parse the structured response
-        analysis = ""
-        prompts = []
+        import re
+        analysis, prompt = "", ""
 
-        # Extract ANALYSIS section
-        analysis_match = re.search(r"ANALYSIS:\s*(.*?)(?=PROMPT_1:|$)", raw_text, re.DOTALL)
-        if analysis_match:
-            analysis = analysis_match.group(1).strip()
+        m = re.search(r"ANALYSIS:\s*(.*?)(?=PROMPT:|$)", raw_text, re.DOTALL)
+        if m:
+            analysis = m.group(1).strip()
 
-        # Extract each PROMPT_N section (3 prompts)
-        for n in range(1, 4):
-            next_n = n + 1
-            if next_n <= 3:
-                pattern = rf"PROMPT_{n}:\s*(.*?)(?=PROMPT_{next_n}:|$)"
-            else:
-                pattern = rf"PROMPT_{n}:\s*(.*?)$"
-            match = re.search(pattern, raw_text, re.DOTALL)
-            if match:
-                prompts.append(match.group(1).strip())
+        m = re.search(r"PROMPT:\s*(.*?)$", raw_text, re.DOTALL)
+        if m:
+            prompt = m.group(1).strip()
 
-        # Fallback: if structured parsing failed, try JSON array
-        if len(prompts) < 3:
-            json_match = re.search(r"\[.*\]", raw_text, re.DOTALL)
-            if json_match:
-                try:
-                    parsed = json.loads(json_match.group())
-                    if isinstance(parsed, list):
-                        prompts = [str(p) for p in parsed[:3]]
-                except (json.JSONDecodeError, ValueError):
-                    pass
-
-        # Last resort: split on numbered headings
-        if len(prompts) < 3:
-            parts_split = re.split(r"(?:Variation\s*\d+:|PROMPT_\d+:|\d+\.\s)", raw_text)
-            prompts = [p.strip() for p in parts_split if len(p.strip()) > 100][:3]
-
-        # Ensure we always have 3 items
-        while len(prompts) < 3:
-            prompts.append(f"Reference-style ad creative — variation {len(prompts)+1}. "
-                          "Clean professional advertisement composition, 1:1 square format, "
-                          "8k resolution, ultra realistic photographic quality.")
-
-        # Prompts already contain variation labels from Gemini — return as-is
-        labelled_prompts = prompts[:3]
+        if not prompt:
+            prompt = raw_text  # fallback: return full response as prompt
 
         return {
             "status": "success",
-            "prompts": labelled_prompts,
             "analysis": analysis,
-            "raw_prompt_count": len(prompts),
+            "prompt": prompt,
         }
 
     except Exception as e:

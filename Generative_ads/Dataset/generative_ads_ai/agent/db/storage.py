@@ -15,6 +15,16 @@ Columns:
     prompts         jsonb
     campaign_payload jsonb
     status          text   ('approved')
+
+Table: reference_analyses
+Columns:
+    id              uuid (auto)
+    created_at      timestamptz (auto)
+    title           text   (user-provided name for this analysis)
+    product_context text   (optional product/brand hint given by user)
+    analysis        text   (Gemini's analysis of the reference image)
+    prompts         jsonb  (list of 3 structured prompt strings)
+    image_url       text   (public URL of the uploaded reference image)
 """
 
 import os
@@ -30,6 +40,7 @@ _SUPABASE_URL = os.getenv("SUPABASE_URL")
 _SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 _BUCKET = "ad-creatives"
 _TABLE = "generated_ads"
+_REF_TABLE = "reference_analyses"
 
 _client: Client | None = None
 
@@ -188,6 +199,89 @@ def get_approved_creatives(product_name: str = "", brand_name: str = "") -> list
 
     result = query.order("created_at", desc=True).execute()
     return result.data or []
+
+
+# ---------------------------------------------------------------------------
+# Reference Image Analysis — memory storage
+# ---------------------------------------------------------------------------
+
+def save_reference_analysis(
+    title: str,
+    product_context: str,
+    analysis: str,
+    prompts: list,
+    image_path: str = "",
+) -> dict:
+    """
+    Save a reference image analysis (title, Gemini analysis text, 3 prompts,
+    and optionally the reference image itself) to the reference_analyses table.
+
+    Returns:
+        {"status": "success", "record_id": "..."} or {"status": "error", "message": "..."}
+    """
+    client = _get_client()
+
+    image_url = ""
+    if image_path and os.path.exists(image_path):
+        try:
+            safe_title = title.lower().replace(" ", "_")[:40]
+            ext = os.path.splitext(image_path)[-1] or ".png"
+            filename = f"reference/{safe_title}_{uuid.uuid4().hex[:8]}{ext}"
+            with open(image_path, "rb") as f:
+                img_bytes = f.read()
+            client.storage.from_(_BUCKET).upload(
+                path=filename,
+                file=img_bytes,
+                file_options={"content-type": "image/png", "upsert": "true"},
+            )
+            image_url = client.storage.from_(_BUCKET).get_public_url(filename)
+            print(f"[Storage] Uploaded reference image: {image_url}")
+        except Exception as e:
+            print(f"[Storage] Reference image upload failed: {e}")
+
+    record = {
+        "title": title,
+        "product_context": product_context,
+        "analysis": analysis,
+        "prompts": prompts,
+        "image_url": image_url,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    try:
+        result = client.table(_REF_TABLE).insert(record).execute()
+        record_id = result.data[0]["id"] if result.data else "unknown"
+        print(f"[Storage] Saved reference analysis '{title}' → {record_id}")
+        return {"status": "success", "record_id": record_id}
+    except Exception as e:
+        print(f"[Storage] Failed to save reference analysis: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+def get_reference_analyses() -> list:
+    """
+    Fetch all saved reference image analyses, newest first.
+    Returns list of record dicts.
+    """
+    client = _get_client()
+    try:
+        result = client.table(_REF_TABLE).select("*").order("created_at", desc=True).execute()
+        return result.data or []
+    except Exception as e:
+        print(f"[Storage] Failed to fetch reference analyses: {e}")
+        return []
+
+
+def delete_reference_analysis(record_id: str) -> dict:
+    """
+    Delete a reference analysis record by UUID.
+    Returns {"status": "deleted"} or {"status": "error", "message": "..."}
+    """
+    client = _get_client()
+    result = client.table(_REF_TABLE).delete().eq("id", record_id).execute()
+    if not result.data:
+        return {"status": "error", "message": "Delete failed — check Supabase RLS policy for reference_analyses table."}
+    return {"status": "deleted", "record_id": record_id}
 
 
 # ---------------------------------------------------------------------------

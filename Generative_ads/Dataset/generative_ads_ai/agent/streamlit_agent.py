@@ -16,7 +16,10 @@ if _ROOT not in sys.path:
 
 import streamlit as st
 from agent.agent import AdAgent
-from agent.db.storage import store_approved_creative, store_approved_prompts, get_approved_creatives, delete_approved_creative
+from agent.db.storage import (
+    store_approved_creative, store_approved_prompts, get_approved_creatives, delete_approved_creative,
+    save_reference_analysis, get_reference_analyses, delete_reference_analysis,
+)
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -85,6 +88,10 @@ def _send(text: str):
         if response.template_prompts:
             st.session_state.template_prompts = response.template_prompts
 
+        if response.analysis_meta:
+            # Capture raw analysis data from analyse_reference_image for saving to memory
+            st.session_state.reference_analysis_result = response.analysis_meta
+
         if response.campaign_context:
             st.session_state.campaign_context.update(response.campaign_context)
 
@@ -130,10 +137,17 @@ if "prompt_uploads" not in st.session_state:
     st.session_state.prompt_uploads = {}  # key: "cluster_i" → UploadedFile
 
 if "template_prompts" not in st.session_state:
-    st.session_state.template_prompts = []  # list of 4 doctor-template variation descriptions
+    st.session_state.template_prompts = []  # single prompt from analyse_reference_image
 
 if "show_reference_uploader" not in st.session_state:
     st.session_state.show_reference_uploader = False
+
+if "reference_analysis_result" not in st.session_state:
+    # Stores the last analysis result for saving: {analysis, prompts, image_path, product_context}
+    st.session_state.reference_analysis_result = {}
+
+if "view_reference_library" not in st.session_state:
+    st.session_state.view_reference_library = False
 
 # ---------------------------------------------------------------------------
 # Header
@@ -144,43 +158,39 @@ st.caption("Your AI-powered advertising assistant. Click a button below to get s
 # ---------------------------------------------------------------------------
 # Action buttons
 # ---------------------------------------------------------------------------
-col1, col2, col3, col4, col5, col_reset = st.columns([1, 1, 1, 1, 1, 1])
+col1, col2, col4, col5, col6, col_reset = st.columns([1, 1, 1, 1, 1, 1])
 
 with col1:
     if st.button("✨ Generate Prompts", use_container_width=True):
         st.session_state.view_library = False
-        _send("Generate Prompts")
+        st.session_state.campaign_context = {}   # clear previous campaign
+        _send(
+            "I want to generate new ad prompts. "
+            "IMPORTANT: Start fresh — ask me which visual theme I want first "
+            "(KR_2D, DR_1ST, KR_2C, SIGNS, or CF), then collect all product details "
+            "from scratch. Do NOT reuse any previous campaign data."
+        )
 
 with col2:
     if st.button("🖼️ Generate Ad Images", use_container_width=True):
         st.session_state.view_library = False
         _send("Generate Ad Images")
 
-with col3:
-    if st.button("🩺 Doctor Template Ad", use_container_width=True):
-        st.session_state.view_library = False
-        _send(
-            "Generate a Doctor Template Ad. "
-            "Step 1: Ask which layout — 'cards' (ingredient cards on the right, like a list) "
-            "or 'table' (ingredient table at the bottom with per-sachet and daily columns). "
-            "Step 2: Collect brand name, product name, up to 3 ingredients "
-            "(for each: ingredient name, dose per sachet, daily dose, and its health benefit), "
-            "price, pack size (e.g. 50 Sachets), discount offer, and tagline. "
-            "Step 3: Ask whether the user wants (a) just the layout prompt/description, "
-            "or (b) the actual image rendered. "
-            "If they want the image, also ask for the doctor/person image file path "
-            "and the product image file path — these are optional, leave blank if not available. "
-            "Then call generate_template_creative with generate_image=true or false accordingly."
-        )
-
 with col4:
     if st.button("🔍 Analyse Reference Image", use_container_width=True):
         st.session_state.view_library = False
+        st.session_state.view_reference_library = False
         st.session_state.show_reference_uploader = not st.session_state.show_reference_uploader
 
 with col5:
     if st.button("📚 View Approved Ads", use_container_width=True):
         st.session_state.view_library = True
+        st.session_state.view_reference_library = False
+
+with col6:
+    if st.button("📖 Reference Library", use_container_width=True):
+        st.session_state.view_reference_library = True
+        st.session_state.view_library = False
 
 with col_reset:
     if st.button("🔄 Reset Conversation", use_container_width=True):
@@ -194,6 +204,8 @@ with col_reset:
         st.session_state.prompt_uploads = {}
         st.session_state.template_prompts = []
         st.session_state.show_reference_uploader = False
+        st.session_state.reference_analysis_result = {}
+        st.session_state.view_reference_library = False
         st.rerun()
 
 st.divider()
@@ -205,7 +217,7 @@ if st.session_state.show_reference_uploader:
     with st.container(border=True):
         st.markdown("### 🔍 Analyse Reference Image")
         st.caption("Upload any ad image — competitor creative, winning ad, or inspiration. "
-                   "Gemini will analyse the visual style and generate 4 prompt variations that replicate it.")
+                   "Gemini extracts the visual style and layout, then generates prompts for YOUR product.")
 
         ref_file = st.file_uploader(
             "Choose a reference image",
@@ -214,28 +226,19 @@ if st.session_state.show_reference_uploader:
         )
 
         if ref_file:
-            col_prev, col_form = st.columns([1, 2])
+            col_prev, col_btn = st.columns([1, 2])
             with col_prev:
                 st.image(ref_file, caption="Reference image", use_container_width=True)
-            with col_form:
-                product_ctx = st.text_input(
-                    "Product / brand context (optional)",
-                    placeholder="e.g. Dr. Bimal's Arjuna Cardio Care Tea",
-                    key="ref_product_ctx",
-                )
-                st.caption("Adding a product name helps Gemini weave it into the generated prompts.")
-
-                if st.button("✨ Analyse & Generate 4 Prompts", type="primary", use_container_width=True):
-                    with st.spinner("Saving image and sending to Gemini for analysis..."):
+            with col_btn:
+                st.caption("Gemini will analyse this image and produce a prompt to recreate the same visual style.")
+                if st.button("🔍 Analyse & Generate Prompt", type="primary", use_container_width=True):
+                    with st.spinner("Saving image..."):
                         saved_path = _save_reference_image(ref_file)
-
                     st.session_state.show_reference_uploader = False
                     _send(
-                        f"Please analyse the reference image at this path: '{saved_path}' "
-                        f"and generate 4 prompt variations. "
-                        f"Product context: '{product_ctx}'. "
-                        f"Call the analyse_reference_image tool with image_path='{saved_path}' "
-                        f"and product_context='{product_ctx}'."
+                        f"Analyse the reference image at: '{saved_path}'. "
+                        f"Call analyse_reference_image with image_path='{saved_path}'. "
+                        f"Then show me the full generated prompt."
                     )
 
 # ---------------------------------------------------------------------------
@@ -294,6 +297,60 @@ if st.session_state.view_library:
     st.stop()
 
 # ---------------------------------------------------------------------------
+# Reference Library view
+# ---------------------------------------------------------------------------
+if st.session_state.view_reference_library:
+    st.subheader("📖 Reference Image Analysis Library")
+    st.caption("All saved reference ad analyses. Each entry stores the original image, Gemini's analysis, and the generated prompts.")
+
+    records = get_reference_analyses()
+    if not records:
+        st.info("No saved analyses yet. Analyse a reference image and save it using the 💾 Save to Memory button.")
+    else:
+        for rec in records:
+            created = rec.get("created_at", "")[:19].replace("T", " ")
+            title = rec.get("title", "Untitled")
+            product_ctx = rec.get("product_context", "")
+
+            with st.container(border=True):
+                col_info, col_del = st.columns([5, 1])
+                with col_info:
+                    st.markdown(f"### {title}")
+                    if product_ctx:
+                        st.caption(f"Product context: {product_ctx}  |  Saved: {created}")
+                    else:
+                        st.caption(f"Saved: {created}")
+                with col_del:
+                    if st.button("🗑️ Delete", key=f"refdel_{rec['id']}", use_container_width=True):
+                        result = delete_reference_analysis(rec["id"])
+                        if result.get("status") == "deleted":
+                            st.rerun()
+                        else:
+                            st.error(result.get("message", "Delete failed."))
+
+                col_img, col_analysis = st.columns([1, 2])
+                with col_img:
+                    if rec.get("image_url"):
+                        st.image(rec["image_url"], caption="Reference image", use_container_width=True)
+
+                with col_analysis:
+                    if rec.get("analysis"):
+                        with st.expander("📊 Gemini Analysis"):
+                            st.text(rec["analysis"])
+
+                if rec.get("prompts"):
+                    with st.expander("📋 Generated Prompts"):
+                        prompts_data = rec["prompts"]
+                        if isinstance(prompts_data, list):
+                            for i, p in enumerate(prompts_data):
+                                st.markdown(f"**Prompt {i+1}**")
+                                st.text(p)
+                                st.divider()
+                        else:
+                            st.write(prompts_data)
+    st.stop()
+
+# ---------------------------------------------------------------------------
 # Chat history
 # ---------------------------------------------------------------------------
 for msg in st.session_state.messages:
@@ -303,56 +360,64 @@ for msg in st.session_state.messages:
             _display_images(msg["images"])
 
 # ---------------------------------------------------------------------------
-# Doctor Template — prompt variation widget
+# Reference Image Analysis — generated prompt display
 # ---------------------------------------------------------------------------
 if st.session_state.template_prompts:
-    st.markdown("### 🩺 Doctor Template Prompts — 4 Variations")
-    st.caption("Each variation keeps the same layout structure with a different mood/style. Select any to generate as an image.")
+    st.markdown("### 🔍 Reference Image — Generated Prompt")
+    st.caption("Copy this prompt and paste it into your image generation tool to recreate the same visual style.")
 
-    selected_template_indices = []
-    for idx, prompt_desc in enumerate(st.session_state.template_prompts):
-        # Extract variation label from first line
-        first_line = prompt_desc.split("\n")[0]
-        col_chk, col_txt = st.columns([0.04, 0.96])
-        with col_chk:
-            checked = st.checkbox("", key=f"tprompt_{idx}", label_visibility="collapsed")
-        with col_txt:
-            with st.expander(f"**{first_line}**"):
-                st.text(prompt_desc)
-        if checked:
-            selected_template_indices.append(idx)
+    prompt_text = st.session_state.template_prompts[0] if st.session_state.template_prompts else ""
+    st.code(prompt_text, language=None)
 
-    tp_col1, tp_col2 = st.columns(2)
-    with tp_col1:
-        if st.button("🖼️ Generate Images from Selected Variations", type="primary", use_container_width=True):
-            if not selected_template_indices:
-                st.warning("Please select at least one variation.")
-            else:
-                chosen = [st.session_state.template_prompts[i] for i in selected_template_indices]
-                st.session_state.template_prompts = []
-                _send(f"Generate images for these {len(chosen)} selected doctor template variations. "
-                      f"Ask for the doctor image path and product image path (both optional), "
-                      f"then call generate_template_creative with generate_image=true. "
-                      f"Variations selected:\n\n" + "\n\n---\n\n".join(chosen))
-    with tp_col2:
-        if st.button("✅ Save Template Prompts to Library", use_container_width=True):
-            if not selected_template_indices:
-                st.warning("Please select at least one variation to save.")
-            else:
-                chosen = [st.session_state.template_prompts[i] for i in selected_template_indices]
-                ctx = st.session_state.campaign_context
-                selected_dict = {f"doctor_template_v{i+1}": [chosen[n]] for n, i in enumerate(selected_template_indices)}
-                with st.spinner("Saving template prompts..."):
-                    result = store_approved_prompts(
-                        product_name=ctx.get("product_name", ""),
-                        brand_name=ctx.get("brand_name", ""),
-                        category=ctx.get("category", ""),
-                        selected_prompts=selected_dict,
-                        campaign_payload=ctx,
-                    )
-                st.session_state.template_prompts = []
-                _add_message("assistant", f"✅ Template prompts saved to library. Record ID: `{result.get('record_id', '?')}`")
-                st.rerun()
+    ref_col1, ref_col2 = st.columns(2)
+    with ref_col1:
+        if st.button("✅ Save Prompt to Library", use_container_width=True):
+            ctx = st.session_state.campaign_context
+            with st.spinner("Saving..."):
+                result = store_approved_prompts(
+                    product_name=ctx.get("product_name", "Reference Analysis"),
+                    brand_name=ctx.get("brand_name", ""),
+                    category=ctx.get("category", ""),
+                    selected_prompts={"reference_style": [prompt_text]},
+                    campaign_payload=ctx,
+                )
+            st.session_state.template_prompts = []
+            _add_message("assistant", f"✅ Prompt saved to library. Record ID: `{result.get('record_id', '?')}`")
+            st.rerun()
+    with ref_col2:
+        if st.button("🗑️ Dismiss", use_container_width=True):
+            st.session_state.template_prompts = []
+            st.rerun()
+
+    # ── Save Reference Analysis to Memory ──────────────────────────────────
+    if st.session_state.reference_analysis_result:
+        with st.container(border=True):
+            st.markdown("#### 💾 Save Analysis to Memory")
+            st.caption("Give this analysis a title and save it to the Reference Library for future use.")
+            ref_title = st.text_input(
+                "Title for this analysis",
+                placeholder="e.g. Arjuna Tea – Winning Dr. Bimal Creative",
+                key="ref_save_title",
+            )
+            if st.button("💾 Save to Reference Library", type="primary", use_container_width=True):
+                if not ref_title.strip():
+                    st.warning("Please enter a title before saving.")
+                else:
+                    meta = st.session_state.reference_analysis_result
+                    with st.spinner("Saving analysis to memory..."):
+                        result = save_reference_analysis(
+                            title=ref_title.strip(),
+                            product_context=meta.get("product_context", ""),
+                            analysis=meta.get("analysis", ""),
+                            prompts=meta.get("prompts", []),
+                            image_path=meta.get("image_path", ""),
+                        )
+                    if result.get("status") == "success":
+                        st.session_state.reference_analysis_result = {}
+                        _add_message("assistant", f"✅ Reference analysis saved as **\"{ref_title}\"**. View it in 📖 Reference Library.")
+                        st.rerun()
+                    else:
+                        st.error(f"Save failed: {result.get('message', 'Unknown error')}. Check Supabase RLS policy for reference_analyses table.")
 
     st.divider()
 

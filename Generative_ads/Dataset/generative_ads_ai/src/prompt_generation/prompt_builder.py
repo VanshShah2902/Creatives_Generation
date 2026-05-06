@@ -1,6 +1,12 @@
 import random
+from src.compliance.nmc_filter import (
+    sanitise_prompt as _nmc_sanitise,
+    audit_payload,
+    DOCTOR_DISCLAIMER_NOTE,
+)
 
 def sanitize_prompt(prompt: str) -> str:
+    """Remove layout-banned phrases then apply full NMC compliance filter."""
     banned_phrases = [
         "clean split-frame horizontal composition",
         "split-frame composition",
@@ -8,12 +14,16 @@ def sanitize_prompt(prompt: str) -> str:
     ]
     for phrase in banned_phrases:
         prompt = prompt.replace(phrase, "")
-    return prompt.strip()
+    # NMC compliance pass — replaces cure/guarantee/disease-claim language
+    return _nmc_sanitise(prompt.strip())
 
-from src.config.config_loader import load_fonts, load_prompts
+from src.config.config_loader import load_fonts, load_prompts, load_ingredient_benefits
 
 FONT_CONFIG = load_fonts()
 FONT_PRESETS = FONT_CONFIG.get("presets", [])
+
+# Ingredient → NMC-compliant ad benefit phrases (from ingredient_benefits.json)
+INGREDIENT_BENEFITS: dict = load_ingredient_benefits()
 
 if not FONT_PRESETS:
     raise ValueError("Font config not loaded")
@@ -142,6 +152,168 @@ CLUSTER_BACKGROUND = {
 }
 
 
+# ---------------------------------------------------------------------------
+# 5 Visual Themes — layout signals injected per theme
+# ---------------------------------------------------------------------------
+
+THEME_LAYOUTS = {
+    # KR 2D
+    "KR_2D": {
+        "label": "14 Ayurvedic Heritage",
+        "has_doctor": True,
+        "headline": (
+            'large bold "14" numeral in red/gold at top-left, '
+            'beside it "Ayurvedic [Subtitle]" where subtitle is one of: '
+            '"Premium Herbal Blend" / "Heart Support Formula" / "Natural Herbs" / "Cardio Wellness Formula"'
+        ),
+        "doctor": (
+            "Dr. Bimal Chhajer full body, LEFT side of frame, 60% of frame height, "
+            "professional confident pose, formal shirt and trousers, "
+            "NO lab coat, NO white coat, NO stethoscope, NO medical equipment"
+        ),
+        "product_placement": (
+            "product packshot anchored at doctor chest level, positioned beside doctor toward center-right, "
+            "tea cup always present alongside packshot"
+        ),
+        "badges": (
+            "RIGHT side: exactly 4 rounded-rectangle pill badges stacked vertically, "
+            "each badge: herb name in bold at top + one benefit text line below it"
+        ),
+        "footer": "\"50 Sachets Rs.599 | Formulated by Dr. Bimal Chhajer\" full-width footer text at bottom of ad",
+        "cta": "NO Shop Now button",
+        "background": "background: choose one from cream / ivory / marble texture / forest green / navy / saffron / champagne",
+        "decorative": (
+            "botanical leaf line-art corner decorations at all 4 corners, "
+            "ECG heartbeat line as subtle horizontal decoration, "
+            "gold accent rule lines and borders"
+        ),
+    },
+
+    # DR 1ST
+    "DR_1ST": {
+        "label": "Doctor Dominant",
+        "has_doctor": True,
+        "headline": (
+            '"[PRODUCT_UPPER]" in large ultra-bold type at top-left of frame, '
+            "NO 14 prefix, product name dominates the entire top section"
+        ),
+        "doctor": (
+            "Dr. Bimal Chhajer full body, LEFT side of frame, very dominant 70-75% of frame height, "
+            "commanding authoritative presence, formal shirt and trousers, "
+            "NO lab coat, NO white coat, NO stethoscope, NO medical equipment"
+        ),
+        "product_placement": (
+            "product packshot smaller, at doctor waist or hand level, positioned center-right, "
+            "tea cup always present alongside packshot"
+        ),
+        "badges": (
+            "RIGHT side: 3 or 4 herb badges in decorative shapes, "
+            "choose from: circles / medallions / scrolls / ribbons / oval plaques, "
+            "each badge: herb name + benefit text"
+        ),
+        "footer": "\"50 Sachets Rs.599 | Formulated by Dr. Bimal Chhajer\" full-width footer at bottom",
+        "cta": "NO Shop Now button",
+        "background": "background: choose one from marble / ivory / cream / forest green / burgundy / copper / olive / sand",
+        "decorative": (
+            "gold coin effects in background, botanical corner decorations, "
+            "ECG heartbeat lines, mandala border elements"
+        ),
+    },
+
+    # KR 2C
+    "KR_2C": {
+        "label": "14-IN-1 Formula E-Commerce",
+        "has_doctor": True,
+        "headline": (
+            'top banner headline: "14-IN-1 FORMULA" or "13-IN-1 BLEND" in bold sans-serif, '
+            'sub-headline directly below in elegant script font: "Dr. Bimal\'s Arjuna Cardio Care Tea"'
+        ),
+        "doctor": (
+            "Dr. Bimal Chhajer bust and head ONLY on RIGHT side, NOT full body, "
+            "confident approachable expression, formal shirt, NO lab coat, NO stethoscope"
+        ),
+        "product_placement": (
+            "product packshot as CENTER HERO, large, elevated on pedestal or marble platform, "
+            "tea cup always present on platform alongside packshot"
+        ),
+        "badges": (
+            "BOTTOM horizontal strip: exactly 4 herbs evenly spaced across full width, "
+            "each herb: small line-art botanical icon ABOVE the herb name text, clean text layout, NO pill badges, "
+            "LEFT side: separate dedicated Rs.599 price badge AND separate 50 Sachets badge"
+        ),
+        "footer": "SHOP NOW green rounded button always present",
+        "cta": "SHOP NOW green rounded button always present",
+        "background": "background: choose one from cream / ivory / marble texture / forest green / saffron / champagne / terracotta",
+        "decorative": (
+            "product on elevated pedestal platform, gold rule lines separating sections, "
+            "botanical watermark elements in background"
+        ),
+    },
+
+    # SIGNS
+    "SIGNS": {
+        "label": "Signs Your Body Is Asking For",
+        "has_doctor": False,
+        "headline": (
+            'bold dark charcoal headline at top: "X signs your body is asking for" '
+            "(X = a number like 5 or 6), "
+            "sub-headline uses ingredient names NOT product name, "
+            'e.g. "Arjuna Chhal, Tulsi & Ashwagandha"'
+        ),
+        "doctor": "NO doctor, NO human portrait, product-only layout",
+        "product_placement": (
+            "product packshot perfectly centered, only the CENTER FACE of the box in sharp focus, "
+            "sides of packshot are blurred and faded outward with vignette effect, "
+            "tea cup always present beside packshot"
+        ),
+        "badges": (
+            "5 to 6 floating benefit or symptom text labels placed organically around the packshot, "
+            "simple clean text, regular font weight, NO icons, NO badge shapes, NO borders, "
+            "text floats freely like scattered soft labels"
+        ),
+        "footer": (
+            "\"Dr. Bimal's\" small text centered at very top of ad, "
+            "minimal footer, nothing heavy at bottom"
+        ),
+        "cta": "NO Shop Now, NO price, awareness-only layout",
+        "background": "clean minimal background: choose one from ivory / sage green / marble / sand / champagne / forest green",
+        "decorative": "clean minimal clinical-wellness DTC health brand aesthetic, subtle and understated",
+    },
+
+    # CF
+    "CF": {
+        "label": "Scientific Gradient 3D",
+        "has_doctor": False,
+        "headline": (
+            "bold white headline in top-RIGHT area, benefit or action statement, "
+            "smaller lighter sub-headline text below it also top-right, "
+            "\"Dr Bimal's\" white/gold small text logo pinned to very top-RIGHT corner"
+        ),
+        "doctor": "NO doctor portrait, Dr Bimal's appears as white/gold text logo in top-right corner only",
+        "product_placement": (
+            "product packshot on LEFT side on white marble surface, "
+            "center face of packshot ZOOMED and MAGNIFIED with spotlight glow effect, sides blurred and faded, "
+            "\"Dr Bimal's\" logo text + \"ARJUNA\" text large and sharp overlaid on spotlight center face, "
+            "tea cup always present beside packshot on marble"
+        ),
+        "badges": (
+            "BOTTOM horizontal strip: exactly 4 herbs, line-art botanical icon + bold herb name + benefit text, "
+            "RIGHT side: 3D scientific illustration, choose from: "
+            "human circulatory system / Arjuna tree cross-section / DNA double helix / "
+            "body silhouette with heart or energy glow, detailed premium CGI quality"
+        ),
+        "footer": "dark rounded CTA button at bottom center, always present",
+        "cta": "CTA dark rounded button at bottom center, always present",
+        "background": (
+            "rich-to-cream gradient background, choose base color from: "
+            "burgundy / forest green / saffron / navy / terracotta, "
+            "gradient flows from rich color at outer edges fading to cream/ivory at center"
+        ),
+        "decorative": "medical-premium scientific clinical trust Ayurvedic science, premium 3D CGI illustration",
+    },
+}
+
+
 class PromptBuilder:
     """
     Converts structured campaign payload into high-fidelity image generation prompts.
@@ -149,50 +321,56 @@ class PromptBuilder:
     and our own winning ad patterns.
     """
 
-    CLUSTER_SCENES = {
-        "product_first": {
-            "composition": "product as undisputed hero, large and central, commanding the entire frame",
-            "subject_positions": "product centered and elevated, maximum breathing space around it"
-        },
-        "solution_first": {
-            "composition": "split layout: solution or positive outcome text dominates the left, product as the hero answer on the right",
-            "subject_positions": "product on right as the glowing hero answer, solution text prominently on left, clear visual contrast between problem state and answered solution"
-        },
-        "doctor_first": {
-            "composition": "doctor as primary trust anchor on the right, benefit points on the left, high-impact authority headline at top",
-            "subject_positions": "doctor on right facing camera, product on desk in foreground, clear space reserved for headline"
-        },
-        "ingredient_first": {
-            "composition": "product centered with ingredient grid layout, ingredients radiating outward",
-            "subject_positions": "product at center in glow circle, key ingredients arranged symmetrically around it"
-        },
-        "problem_first": {
-            "environment": "real-life discomfort setting, slightly tense and urgent atmosphere",
-            "camera": "eye-level emotional storytelling shot",
-            "lighting": "slightly dramatic, soft shadow lighting with urgency",
-            "subject_positions": "left side shows the problem statement in bold red text overlay, right side shows the product as the clear solution",
-            "props": "subtle lifestyle elements indicating health discomfort"
-        }
+    # Cluster intent — used as a HINT only when theme doesn't specify layout
+    # Theme always wins for composition/position; cluster adds content focus
+    CLUSTER_CONTENT_FOCUS = {
+        "product_first":    "product as undisputed hero — large, elevated, maximum breathing space, pristine clarity",
+        "solution_first":   "positive outcome and transformation — hopeful, aspirational, benefit-forward visual storytelling",
+        "doctor_first":     "medical authority and trust — expert credibility, clean clinical confidence, formulation expertise",
+        "ingredient_first": "ingredient transparency — key Ayurvedic ingredients visually present, botanical authenticity",
+        "problem_first":    "urgent relatable health concern — problem stated clearly, product positioned as the answer",
     }
 
-    # 5 variation styles — each one drives a different visual approach
-    VARIATIONS = [
-        "close-up macro product shot, bright high-key lighting, clean clinical mood",
-        "wide angle lifestyle scene, warm natural sunlight, relatable human environment",
-        "top-down flat lay, natural daylight, organic botanical mood",
-        "eye-level premium product shot, soft diffused lighting, minimal luxury feel",
-        "dramatic angled shot, high contrast lighting, bold attention-grabbing urgency",
+    # Cluster-specific subject/person intent (who is in the scene)
+    CLUSTER_SUBJECT_INTENT = {
+        "product_first":    "product-focused, no person required — product IS the hero",
+        "solution_first":   "optional: person experiencing positive transformation or relief, warm and hopeful expression",
+        "doctor_first":     "professional Indian doctor in white coat, authoritative and reassuring, direct eye contact, NO stethoscope",
+        "ingredient_first": "no human required — ingredients and product tell the story",
+        "problem_first":    "middle-aged Indian person showing visible health concern, tense posture, relatable distress",
+    }
+
+    # Camera style allowed per theme — flat-lay conflicts with standing-doctor themes
+    _DOCTOR_THEMES = {"KR_2D", "DR_1ST", "KR_2C"}
+    _NO_DOCTOR_THEMES = {"SIGNS", "CF"}
+
+    # Variation sets: (lighting_mood, camera_style)
+    # Doctor-present themes skip flat-lay (variation index 2)
+    VARIATIONS_ALL = [
+        "bright high-key studio lighting, clean clinical mood, eye-level product shot",
+        "warm natural sunlight, wide lifestyle scene, relatable human environment, eye-level",
+        "top-down flat lay, soft natural daylight, organic botanical overhead composition",  # index 2 — doctor themes skip
+        "soft diffused lighting, minimal luxury feel, eye-level premium shot",
+        "high contrast dramatic lighting, bold angled shot, attention-grabbing urgency",
+    ]
+    VARIATIONS_DOCTOR = [
+        "bright high-key studio lighting, clean clinical mood, three-quarter portrait angle",
+        "warm natural light from left, open confident stance, three-quarter portrait angle",
+        "soft diffused studio lighting, authoritative frontal stance, direct camera gaze",
+        "dramatic side-lighting, strong confident posture, premium portrait mood",
+        "natural warm lighting, relaxed yet professional stance, approachable portrait angle",
     ]
 
     def build_prompt_core(self, cluster_id: str) -> str:
-        c_scene = self.CLUSTER_SCENES.get(cluster_id, self.CLUSTER_SCENES["product_first"])
-        comp = c_scene.get("composition", "focused structured composition")
-        pos  = c_scene.get("subject_positions", "subject clearly visible")
-        return f"{comp}, {pos}"
+        """Return the cluster's content focus — used as a hint, not a layout override."""
+        return self.CLUSTER_CONTENT_FOCUS.get(cluster_id, "product as hero, clean focused composition")
 
     def build_multiple_prompts(self, payload, cluster_id, blueprint=None, strategy=None, num_variations=5):
         print("[PromptBuilder] Building prompts for cluster:", cluster_id)
         prompts = []
+
+        # ── NMC Compliance: sanitise all claim fields before building ────────
+        payload = audit_payload(dict(payload))
 
         product_name = payload.get("product_name", "").strip()
         if not product_name:
@@ -202,175 +380,177 @@ class PromptBuilder:
         problems     = payload.get("problems", [])
         ingredients  = payload.get("ingredients", [])
         price        = payload.get("price", "")
-        category     = payload.get("category", "")
 
-        # Load emotions for this cluster
+        # ── Theme — MASTER AUTHORITY ─────────────────────────────────────────
+        theme_key  = payload.get("theme", "KR_2D")
+        theme      = THEME_LAYOUTS.get(theme_key, THEME_LAYOUTS["KR_2D"])
+        has_doctor = theme.get("has_doctor", False)
+        no_doctor  = not has_doctor
+        print(f"[PromptBuilder] Theme: {theme_key} — {theme['label']} | doctor={has_doctor}")
+
         from src.config.config_loader import load_emotions
         EMOTION_CONFIG = load_emotions()
         cluster_emotions = EMOTION_CONFIG.get(cluster_id, ["confidence"])
-
-        # Strategy overrides
         headline_tone = strategy.get("headline_tone") if strategy else "informative"
 
-        # Precompute: which variations feature a woman (2-3 of 5)
-        num_woman = random.choice([2, 3])
-        use_woman_indices = set(random.sample(range(num_variations), k=min(num_woman, num_variations)))
+        hook_cycle     = CLUSTER_HOOK_CYCLES.get(cluster_id, ["benefit"] * 5)
+        color_options  = CLUSTER_COLORS.get(cluster_id, [("deep green", "white", "gold")])
 
-        # Hook cycle for this cluster
-        hook_cycle = CLUSTER_HOOK_CYCLES.get(cluster_id, ["benefit"] * 5)
+        # Pick variation set: doctor themes get portrait-safe camera styles
+        variation_pool = self.VARIATIONS_DOCTOR if has_doctor else self.VARIATIONS_ALL
 
-        # Visual patterns for this cluster
-        visual_patterns = CLUSTER_VISUAL_PATTERNS.get(cluster_id, ["product as hero"] * 5)
-
-        # Winning color palettes for this cluster
-        color_options = CLUSTER_COLORS.get(cluster_id, [("deep green", "white", "gold")])
-
-        for i, variation in enumerate(self.VARIATIONS[:num_variations]):
+        for i in range(num_variations):
+            variation = variation_pool[i % len(variation_pool)]
             emotion   = random.choice(cluster_emotions)
             hook_type = hook_cycle[i % len(hook_cycle)]
-            print(f"[PromptBuilder][Variation {i}] Emotion: {emotion} | Hook: {hook_type}")
+            print(f"[PromptBuilder][{cluster_id}][V{i}] Theme:{theme_key} Hook:{hook_type} Emotion:{emotion}")
 
             components = []
 
-            # ── 1. Variation style (sets lighting + camera mood) ──────────────
-            components.append(variation)
+            # ══ BLOCK 1: THEME — highest priority, exact pixel-level layout ═══
+            # Substitute [PRODUCT] and [PRODUCT_UPPER] placeholders with actual name
+            def _t(s: str) -> str:
+                return s.replace("[PRODUCT]", product_name).replace("[PRODUCT_UPPER]", product_name.upper())
 
-            # ── 2. Core scene structural signal ──────────────────────────────
-            components.append(self.build_prompt_core(cluster_id))
+            components.append(f"AD LAYOUT THEME: {theme['label']}")
+            components.append(f"HEADLINE: {_t(theme['headline'])}")
+            components.append(f"BACKGROUND: {theme['background']}")
+            components.append(f"DECORATIVE ELEMENTS: {theme['decorative']}")
+            # KR_2C / DR_1ST headlines already contain product name — skip prefix to avoid duplication
+            _headline_has_name = theme_key in ("KR_2C", "DR_1ST")
+            _placement_prefix = "" if _headline_has_name else f"{product_name} — "
+            components.append(f"PRODUCT PLACEMENT: {_placement_prefix}{theme['product_placement']}")
+            components.append(f"BADGES AND HERB DISPLAY: {theme['badges']}")
+            components.append(f"FOOTER: {_t(theme['footer'])}")
+            components.append(f"CTA: {theme['cta']}")
 
-            # ── 3. Winning visual pattern for this variation ──────────────────
-            components.append(visual_patterns[i % len(visual_patterns)])
+            # ══ BLOCK 2: SUBJECT — derived from theme's doctor field ═══════════
+            if no_doctor:
+                components.append(f"SUBJECT: {theme['doctor']}")
+            elif has_doctor:
+                components.append(f"SUBJECT: {theme['doctor']}")
+                if cluster_id == "doctor_first":
+                    components.append(DOCTOR_DISCLAIMER_NOTE)
 
-            # ── 4. Blueprint environment only (NOT lighting — variation sets that) ──
-            if blueprint:
-                env = blueprint.get("environment", "")
-                if env:
-                    components.append(f"environment setting: {env}")
+            # ══ BLOCK 3: CAMERA & LIGHTING (theme-safe variation) ════════════
+            components.append(f"CAMERA & LIGHTING: {variation}")
 
-            # ── 5. Subject strategy ──────────────────────────────────────────
-            if cluster_id == "doctor_first":
-                components.append("featuring a professional Indian doctor in white coat as subject, authoritative and reassuring, NO stethoscope, no medical equipment around neck")
+            # ══ BLOCK 4: CLUSTER CONTENT FOCUS — defines WHAT the ad communicates ══
+            # Theme controls WHERE things go; Cluster controls WHAT story is told
+            components.append(f"PRIMARY CREATIVE GOAL: {self.build_prompt_core(cluster_id)}")
+
+            # Cluster-specific content signals — these define the unique story per cluster
+            if cluster_id == "product_first":
+                components.append("STORY: the product IS the entire hero — isolated, elevated, glorified, large")
+                components.append("MOOD: premium, aspirational, brand-forward — NO lifestyle context, NO people, product commands 100% of attention")
+                components.append("VISUAL EMPHASIS: product packaging ultra-sharp and detailed, clean breathing space around it, dramatic product lighting only")
+
+            elif cluster_id == "solution_first":
+                if solutions:
+                    sel_sol = random.sample(solutions, min(2, len(solutions)))
+                    components.append(f"STORY: ad communicates a clear positive outcome — '{' | '.join(sel_sol)}' — shown as the central message")
+                components.append("MOOD: hopeful, warm, transformative — viewer sees a better future through this product")
+                components.append("VISUAL EMPHASIS: positive outcome text is large and prominent, product is the solution vehicle, aspirational tone")
+
+            elif cluster_id == "doctor_first":
+                if has_doctor:
+                    components.append("STORY: expert authority validates this product — formulation credibility is the entire message")
+                    components.append("MOOD: clinical trust, medical authority, expert confidence — viewer feels safe choosing this product")
+                    components.append("TEXT OVERLAY: 'Formulated by Dr. Bimal Chhajer' or 'Expert-formulated for heart health' — authority signal is primary")
+                else:
+                    # No-doctor theme (CF/SIGNS) but doctor_first cluster — shift to brand authority
+                    components.append("STORY: brand authority and scientific credibility — expert formulation conveyed through design language, not portrait")
+                    components.append("MOOD: premium, science-backed, authoritative — clinical precision in the visual")
+                    components.append("TEXT OVERLAY: 'Expert-formulated' or 'Clinically researched ingredients' — authority through text, not person")
+
+            elif cluster_id == "ingredient_first":
+                if ingredients:
+                    sel_ings = random.sample(ingredients, min(3, len(ingredients)))
+                    components.append(f"STORY: the ingredients ARE the hero — '{', '.join(sel_ings)}' shown as raw botanical elements alongside the product")
+                components.append("MOOD: natural, transparent, scientifically curious — viewer can see exactly what goes into the product")
+                components.append("VISUAL EMPHASIS: raw herbs, botanical elements, or ingredient close-ups integrated into the composition organically")
+
             elif cluster_id == "problem_first":
-                # problem_first always has a person showing the problem
-                components.append("featuring a natural looking middle-aged Indian person showing health distress")
-            elif i in use_woman_indices:
-                components.append("featuring a natural looking Indian middle-aged woman in the scene, relatable and expressive")
-            else:
-                components.append("product-focused scene, no human subject, emphasizing product clarity and brand authority")
-
-            # ── 6. Product name (appears twice: scene + brand anchor) ─────────
-            components.append(f"featuring {product_name}")
-
-            # ── 7. Benefits (randomized 3) ────────────────────────────────────
-            if benefits:
-                selected = random.sample(benefits, min(3, len(benefits)))
-                components.append(f"key highlights: {', '.join(selected)}")
-
-            # ── 8. Cluster-specific content injection ─────────────────────────
-
-            # solution_first: inject user's solutions
-            if cluster_id == "solution_first" and solutions:
-                selected_solutions = random.sample(solutions, min(2, len(solutions)))
-                components.append(f"solutions featured prominently: {', '.join(selected_solutions)}")
-                components.append("visual emphasis on the positive outcome and transformation")
-
-            # ingredient_first: inject ingredients
-            if cluster_id == "ingredient_first" and ingredients:
-                selected_ings = random.sample(ingredients, min(3, len(ingredients)))
-                components.append(f"featuring key ingredients: {', '.join(selected_ings)}, ingredients visually arranged around product in a botanical composition")
-
-            # problem_first: inject user's specific problems
-            if cluster_id == "problem_first":
                 if problems:
-                    problem_text = random.choice(problems)
-                    components.append(f"bold left-side text overlay: '{problem_text}'")
-                    components.append("right side: product shown as the direct, clear solution to the stated problem")
-                components.append("person showing visible discomfort, health concern, tense posture and expressive worried face")
-                components.append("headline framed as a direct problem statement, emotionally urgent and relatable")
+                    prob = random.choice(problems)
+                    components.append(f"STORY: starts with a relatable health problem — '{prob}' — product is clearly the answer")
+                    components.append(f"TEXT OVERLAY: '{prob}' in bold prominent text — problem stated directly, product shown as the solution")
+                components.append("MOOD: urgent and emotionally honest problem → product as clear relief — viewer recognizes their own struggle")
+                components.append("VISUAL EMPHASIS: problem text is large and prominent, product positioned as the direct answer to that specific problem")
 
-            # ── 9. Price (if provided) ────────────────────────────────────────
-            if price:
-                components.append(f"price: {price}")
+            # Product name carried by theme HEADLINE and PRODUCT PLACEMENT fields above
+            # No separate PRODUCT block needed — avoids duplication
 
-            # ── 10. Hook type compositional signal ────────────────────────────
+            # ══ BLOCK 6: INGREDIENT BENEFIT CALLOUTS ══════════════════════════
+            if ingredients:
+                known_ings = [ing for ing in ingredients if ing in INGREDIENT_BENEFITS]
+                if not known_ings:
+                    known_ings = [
+                        kb for kb in INGREDIENT_BENEFITS
+                        if any(kb.lower() in ing.lower() or ing.lower() in kb.lower() for ing in ingredients)
+                    ]
+                sample_ings = random.sample(known_ings, min(3, len(known_ings))) if known_ings else []
+                if sample_ings:
+                    callouts = [random.choice(INGREDIENT_BENEFITS[ing]) for ing in sample_ings]
+                    components.append(f"INGREDIENT CALLOUTS (text overlay badges): {' | '.join(callouts)}")
+
+            # ══ BLOCK 7: HOOK & EMOTION ════════════════════════════════════════
             hook_signals = {
-                "fear":      "fear-based hook, urgent warning tone, medical authority, alarming visual anchor",
-                "benefit":   "benefit-led hook, clear outcome promise, aspirational and positive visual",
-                "curiosity": "curiosity hook, open question or knowledge gap visual, viewer wants to know more",
-                "authority": "authority hook, scientific credibility, doctor or expert validation visual",
-                "problem":   "problem identification hook, relatable pain point, viewer sees themselves in it",
-                "relief":    "relief hook, positive transformation, stress lifting, hopeful outcome visual",
-                "trust":     "trust hook, credibility signals, clean professional aesthetic, proof elements",
+                "fear":      "fear-based hook — urgent warning, alarming visual anchor, medical authority tone",
+                "benefit":   "benefit-led hook — clear positive outcome promise, aspirational visual",
+                "curiosity": "curiosity hook — open question, knowledge gap, viewer wants to know more",
+                "authority": "authority hook — scientific credibility, expert validation, trust signals",
+                "problem":   "problem identification hook — relatable pain point, viewer sees themselves in it",
+                "relief":    "relief hook — stress lifting, positive transformation, hopeful resolution",
+                "trust":     "trust hook — clean professional aesthetic, credibility proof elements",
             }
-            components.append(hook_signals.get(hook_type, "benefit-led hook"))
+            components.append(f"HOOK: {hook_signals.get(hook_type, 'benefit-led hook')}")
+            if not no_doctor:  # skip facial expression for no-human themes
+                expression = EMOTION_EXPRESSIONS.get(emotion, f"subject expressing {emotion}")
+                components.append(f"EXPRESSION: {expression}")
 
-            # ── 11. Emotion with specific facial expression ───────────────────
-            expression = EMOTION_EXPRESSIONS.get(emotion, f"subject expressing {emotion}")
-            components.append(expression)
-
-            # ── 12. Winning color palette (competitor-intelligence-derived) ───
+            # ══ BLOCK 8: COLOR ════════════════════════════════════════════════
             color_pick = random.choice(color_options)
             primary, secondary, accent = color_pick
-            components.append(f"color scheme: {primary} as primary, {secondary} as secondary, {accent} as accent — high contrast, clear visual hierarchy")
+            components.append(f"COLOR: {primary} primary, {secondary} secondary, {accent} accent — high contrast, clear hierarchy")
 
-            # ── 13. Background type ───────────────────────────────────────────
-            bg_options = CLUSTER_BACKGROUND.get(cluster_id, ["plain"])
-            bg_type = bg_options[i % len(bg_options)]
-            if bg_type == "plain":
-                components.append("clean plain background, no distracting elements, product and subject as sole focus")
-            elif bg_type == "gradient":
-                components.append("smooth gradient background, soft color transition, modern premium feel")
-            else:
-                components.append("real-life contextual background, slightly blurred for depth of field")
+            # ══ BLOCK 9: PRICE ════════════════════════════════════════════════
+            if price and theme_key != "SIGNS":
+                components.append(f"PRICE DISPLAY: {price}")
 
-            # ── 14. Typography signals — cluster-primary, hook-secondary ─────
-            # Each cluster has a distinct typographic personality derived from
-            # competitor analysis: premium (product), calm (solution), trust
-            # (doctor), natural (ingredient), panic (problem)
+            # ══ BLOCK 10: TYPOGRAPHY ══════════════════════════════════════════
             CLUSTER_FONT_MAP = {
-                "product_first":    "premium",    # aspirational, brand-forward
-                "solution_first":   "calm",       # warm, hopeful, relief
-                "doctor_first":     "trust",      # clinical authority, credibility
-                "ingredient_first": "natural",    # earthy, organic, curiosity
-                "problem_first":    "panic",      # urgent, alarming, fear-driven
+                "product_first":    "premium",
+                "solution_first":   "calm",
+                "doctor_first":     "trust",
+                "ingredient_first": "natural",
+                "problem_first":    "panic",
             }
             preset_name = CLUSTER_FONT_MAP.get(cluster_id, "premium")
-            # Hook override: benefit variation of problem_first pivots to calm
-            # (resolution moment — the ad is showing the answer, not the fear)
             if cluster_id == "problem_first" and hook_type == "benefit":
-                preset_name = "calm"
-            # Hook override: authority hook in non-doctor cluster → trust blend
+                preset_name = "calm"   # resolution pivot
             if hook_type == "authority" and cluster_id != "doctor_first":
                 preset_name = "trust"
             font_preset = next((p for p in FONT_PRESETS if p["name"] == preset_name), FONT_PRESETS[0])
-
             print("[FontPreset]", font_preset["name"])
-            components.append(f"headline text: {font_preset['headline']}")
-            components.append(f"supporting text: {font_preset['sub']}")
-            components.append("clean professional typography hierarchy, high readability, low text density, text does not overwhelm the visual")
+            components.append(f"TYPOGRAPHY: headline — {font_preset['headline']} | supporting — {font_preset['sub']}")
+            components.append("clean typography hierarchy, high readability, low text density, text never overwhelms the visual")
 
-            # ── 14b. Product name text overlay (80% of variations) ────────────
-            if (i % 5) in _NAME_OVERLAY_INDICES:
-                components.append(f"visible product name text overlay: '{product_name}' rendered in bold legible typography, prominently placed, easy to read at a glance")
+            # Product name overlay removed — product name appears once in BLOCK 5 only
 
-            # ── 15. Headline tone ─────────────────────────────────────────────
-            components.append(f"headline tone: {headline_tone}, emotionally resonant, concise and punchy")
+            # ══ BLOCK 12: HEADLINE TONE ═══════════════════════════════════════
+            components.append(f"HEADLINE TONE: {headline_tone}, emotionally resonant, concise and punchy")
 
-            # ── 16. Brand anchor — reinforces product name a second time ─────
-            components.append(f"product name clearly visible: {product_name}, brand identity reinforced throughout the composition")
-
-            # ── 17. Product image preservation (critical) ─────────────────────
+            # ══ BLOCK 13: PRODUCT PRESERVATION (CRITICAL) ════════════════════
             components.extend([
-                "IMPORTANT: preserve the exact product packaging, label, logo, and design — do NOT alter, modify, replace, reimagine, or reinterpret the product in any way",
-                "the product must appear exactly as provided with no changes to its shape, color, text, or branding",
+                "CRITICAL: preserve exact product packaging, label, logo, and design — do NOT alter, modify, replace, reimagine, or reinterpret the product in any way",
+                "product must appear exactly as provided — no changes to shape, color, text, or branding",
             ])
 
-            # ── 17. Quality and format modifiers ─────────────────────────────
+            # ══ BLOCK 14: QUALITY ═════════════════════════════════════════════
             components.extend([
-                "clear visual hierarchy, single focal point, no cluttered elements",
-                "clean advertisement composition",
-                "1:1 square format",
-                "no distortion, balanced layout",
+                "clear visual hierarchy, single focal point, no clutter",
+                "clean professional advertisement composition, 1:1 square format",
                 "8k resolution, ultra realistic, photographic quality",
             ])
 

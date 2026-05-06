@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from groq import Groq, BadRequestError, APIStatusError
 from dotenv import load_dotenv
 
-from agent.system_prompt import SYSTEM_PROMPT
+from agent.system_prompt import SYSTEM_PROMPT, FALLBACK_SYSTEM_PROMPT
 from agent.tool_registry import TOOLS, execute_tool
 
 load_dotenv()
@@ -83,10 +83,15 @@ def _summarise_tool_result(tool_name: str, result: dict) -> dict:
         }
 
     if tool_name == "analyse_reference_image" and result.get("status") == "success":
+        prompt_preview = result.get("prompt", "")[:200]
         return {
             "status": "success",
-            "message": f"{result.get('raw_prompt_count', 4)} prompt variations generated from the reference image. The UI will display them for the user to select.",
-            "analysis_summary": result.get("analysis", "")[:300],  # keep short
+            "message": (
+                "Reference image analysed. A ready-to-use image generation prompt has been produced. "
+                "Show the full prompt to the user and tell them they can copy it directly into an image generation tool."
+            ),
+            "analysis_preview": result.get("analysis", "")[:300],
+            "prompt_preview": prompt_preview,
         }
 
     if tool_name in ("generate_creative", "generate_template_creative") and result.get("status") == "success":
@@ -101,7 +106,6 @@ def _summarise_tool_result(tool_name: str, result: dict) -> dict:
                 "message": f"{len(prompts)} prompt variation(s) generated. Show each one to the user.",
             }
         images = result.get("images", [])
-        self._pending_images = images   # ensure all 4 are captured
         return {
             "status": "success",
             "message": f"{len(images)} ad image(s) generated and shown to the user for approval.",
@@ -132,6 +136,7 @@ class AgentResponse:
     text: str
     cluster_prompts: dict = field(default_factory=dict)
     template_prompts: list = field(default_factory=list)   # 3 doctor-template / reference variation descriptions
+    analysis_meta: dict = field(default_factory=dict)       # raw analyse_reference_image result for saving to memory
     images: list = field(default_factory=list)
     awaiting_approval: bool = False
     approval_payload: dict = field(default_factory=dict)
@@ -168,25 +173,46 @@ class AdAgent:
 
         cluster_prompts: dict = {}
         template_prompts: list = []
+        analysis_meta: dict = {}
         images: list = []
         campaign_context: dict = {}
 
         while True:
             try:
+                # Fallback model has low TPM — use compact prompt + short history
+                _sys = FALLBACK_SYSTEM_PROMPT if self.model == _FALLBACK_MODEL else SYSTEM_PROMPT
+                _hist = self.conversation_history[-6:] if self.model == _FALLBACK_MODEL else self.conversation_history
                 response = self.client.chat.completions.create(
                     model=self.model,
-                    messages=[{"role": "system", "content": SYSTEM_PROMPT}] + self.conversation_history,
+                    messages=[{"role": "system", "content": _sys}] + _hist,
                     tools=_GROQ_TOOLS,
                     tool_choice="auto",
-                    max_tokens=4096,
+                    max_tokens=1024 if self.model == _FALLBACK_MODEL else 4096,
                 )
             except BadRequestError as e:
                 # Groq returns 400 tool_use_failed when Llama produces invalid JSON
-                # in the tool call arguments — switch to fallback model and retry once
-                if "tool_use_failed" in str(e) and self.model != _FALLBACK_MODEL:
-                    print(f"[Agent] tool_use_failed on {self.model} — retrying with {_FALLBACK_MODEL}")
-                    self.model = _FALLBACK_MODEL
-                    continue
+                # in the tool call arguments
+                if "tool_use_failed" in str(e):
+                    if self.model != _FALLBACK_MODEL:
+                        # First failure — switch to fallback model and retry
+                        print(f"[Agent] tool_use_failed on {self.model} — retrying with {_FALLBACK_MODEL}")
+                        self.model = _FALLBACK_MODEL
+                        continue
+                    else:
+                        # Fallback also failed — disable tools, get plain text recovery response
+                        print(f"[Agent] tool_use_failed on fallback too — retrying with tool_choice=none")
+                        _sys = FALLBACK_SYSTEM_PROMPT
+                        _hist = self.conversation_history[-4:]
+                        recovery = self.client.chat.completions.create(
+                            model=_FALLBACK_MODEL,
+                            messages=[{"role": "system", "content": _sys}] + _hist,
+                            max_tokens=512,
+                        )
+                        text = recovery.choices[0].message.content or (
+                            "I had trouble processing that. Could you confirm all the required details "
+                            "(product name, problems, solutions, and theme) so I can generate your prompts?"
+                        )
+                        return AgentResponse(text=text)
                 raise
             except APIStatusError as e:
                 # 413 = request too large — aggressively trim tool result messages
@@ -255,7 +281,17 @@ class AdAgent:
                             self._pending_images = images
 
                     if tc.function.name == "analyse_reference_image" and result.get("status") == "success":
-                        template_prompts = result.get("prompts", [])
+                        # Surface the generated prompt in the template_prompts widget
+                        gen_prompt = result.get("prompt", "")
+                        if gen_prompt:
+                            template_prompts = [gen_prompt]
+                        analysis_meta = {
+                            "analysis":        result.get("analysis", ""),
+                            "prompt":          gen_prompt,
+                            "image_path":      inputs.get("image_path", ""),
+                            "prompts":         [gen_prompt] if gen_prompt else [],
+                            "product_context": "",
+                        }
 
                     if tc.function.name == "generate_creative" and result.get("status") == "success":
                         images = result.get("images", [])
@@ -276,6 +312,7 @@ class AdAgent:
                     text=text,
                     cluster_prompts=cluster_prompts,
                     template_prompts=template_prompts,
+                    analysis_meta=analysis_meta,
                     images=[img["path"] for img in images],
                     awaiting_approval=awaiting_approval,
                     approval_payload=approval_payload,
