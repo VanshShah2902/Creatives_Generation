@@ -94,8 +94,13 @@ def build_input_parts(prompt, product_path=None, person_path=None):
 class SceneGenerator:
     """Handles single-shot ad generation using Gemini multimodal image generation."""
     
-    def __init__(self, config_dir: str = "configs"):
-        self.config_dir = config_dir
+    def __init__(self, config_dir: str = None):
+        if config_dir is None:
+            # Default to the 'configs' folder in the project root
+            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+            self.config_dir = os.path.join(project_root, "configs")
+        else:
+            self.config_dir = config_dir
 
     def generate_scene(self, payload: dict) -> str:
         prompt = payload.get("scene_prompt", "")
