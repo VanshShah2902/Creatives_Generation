@@ -7,8 +7,14 @@ import os
 class LayoutEngine:
     """Enforces advertisement design structure using a resolution-independent coordinate system."""
     
-    def __init__(self, config_dir: str = "configs"):
-        self.config_dir = config_dir
+    def __init__(self, config_dir: str = None):
+        if config_dir is None:
+            # Default to the 'configs' folder in the project root (one level up from this file's directory)
+            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+            self.config_dir = os.path.join(project_root, "configs")
+        else:
+            self.config_dir = config_dir
+            
         self.layout_presets = self._load_config("layout_presets.json")
         self.anchor_map = self._load_config("anchor_map.json")
         
